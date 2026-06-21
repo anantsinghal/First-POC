@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from .base import Candidate, DetectionContext, Detector
+from .rules.completeness import MissingCloseDateDetector
+from .rules.duplicates import DuplicateNameDetector
 from .rules.opportunity import (
     ClosedWonContractDetector,
     InvalidStageDetector,
@@ -10,6 +12,7 @@ from .rules.opportunity import (
     NonPositiveAmountDetector,
 )
 from .rules.required_fields import RequiredFieldsDetector
+from .rules.temporal import StaleOpenOpportunityDetector
 from .statistical.iqr_outlier import IqrOutlierDetector
 from .statistical.rare_combination import RareCombinationDetector
 
@@ -40,7 +43,7 @@ class DetectorRegistry:
 
 
 def build_default_registry() -> DetectorRegistry:
-    """Return registry with the 7 POC detectors in the exact baseline order."""
+    """Return registry with the 7 POC + 3 new detectors appended (preserving original order)."""
     return DetectorRegistry([
         RequiredFieldsDetector(),
         InvalidStageDetector(),
@@ -49,4 +52,7 @@ def build_default_registry() -> DetectorRegistry:
         NonPositiveAmountDetector(),
         IqrOutlierDetector(),
         RareCombinationDetector(),
+        StaleOpenOpportunityDetector(),
+        DuplicateNameDetector(),
+        MissingCloseDateDetector(),
     ])

@@ -38,6 +38,9 @@ class FieldPolicy:
             "non_positive_amount": (Severity.MEDIUM, 0.92, 0.75),
             "numeric_outlier": (Severity.MEDIUM, 0.76, 0.57),
             "rare_combination": (Severity.LOW, 0.68, 0.36),
+            "stale_open_opportunity": (Severity.HIGH, 0.90, 0.88),
+            "duplicate_name": (Severity.MEDIUM, 0.80, 0.65),
+            "missing_close_date": (Severity.MEDIUM, 0.85, 0.60),
         }
         return values[rule]
 
