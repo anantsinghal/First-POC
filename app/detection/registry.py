@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from ..domain.models import CheckRequirement
 from .base import Candidate, DetectionContext, Detector
 from .rules.completeness import MissingCloseDateDetector
 from .rules.duplicates import DuplicateNameDetector
@@ -40,6 +41,10 @@ class DetectorRegistry:
         for det in self._detectors:
             results.extend(det.detect(ctx))
         return results
+
+    def requirements(self) -> list[CheckRequirement]:
+        """Return declared requirements for detectors that have them (in registration order)."""
+        return [d.requirement for d in self._detectors if getattr(d, "requirement", None) is not None]
 
 
 def build_default_registry() -> DetectorRegistry:

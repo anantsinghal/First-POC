@@ -37,8 +37,8 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     """Replicate the exact wiring currently in main.py."""
     database = Database(data_dir / "scanner.db")
     profiler = Profiler()
-    grader = CoverageGrader(DEFAULT_POLICY)
     registry = build_default_registry()
+    grader = CoverageGrader(DEFAULT_POLICY, requirements=registry.requirements())
     scans = ScanRepository()
     coverage_repo = CoverageRepository()
     findings = FindingRepository()

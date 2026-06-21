@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from datetime import date
+from typing import ClassVar
 
+from ...domain.models import CheckRequirement
 from ...domain.values import clean, parse_date
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -10,6 +12,7 @@ class StaleOpenOpportunityDetector:
     """Temporal detector for open opportunities with past CloseDate. id='stale_open_opportunity'."""
 
     id: str = "stale_open_opportunity"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Stale-open-opportunity check", ("StageName", "CloseDate"), "opportunity")
 
     CLOSED_STAGES = frozenset({"Closed Won", "Closed Lost"})
 

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import ClassVar
 
+from ...domain.models import CheckRequirement
 from ...domain.values import clean
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -10,6 +12,7 @@ class DuplicateNameDetector:
     """Duplicate detector by (case-folded) Name. id='duplicate_name'."""
 
     id: str = "duplicate_name"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Duplicate-by-Name check", ("Name",), None)
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Return [] unless has Name; count casefold names for Id+Name rows; emit for dups."""

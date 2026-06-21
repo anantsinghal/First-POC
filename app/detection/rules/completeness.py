@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
+from ...domain.models import CheckRequirement
 from ...domain.values import clean
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -8,6 +11,7 @@ class MissingCloseDateDetector:
     """Completeness detector for Opportunity missing CloseDate. id='missing_close_date'."""
 
     id: str = "missing_close_date"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Missing-Close-Date check", ("CloseDate",), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only for Opportunity with CloseDate field present; emit on empty CloseDate values (with Id)."""

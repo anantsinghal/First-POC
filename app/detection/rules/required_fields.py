@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
+from ...domain.models import CheckRequirement
 from ...domain.values import clean
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -8,6 +11,7 @@ class RequiredFieldsDetector:
     """Detector for missing required fields (default: Name). id='missing_required'."""
 
     id: str = "missing_required"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Required-field check", ("Name",), None)
 
     def __init__(self, required: tuple[str, ...] = ("Name",)) -> None:
         """Allow overriding the tuple of required field names."""

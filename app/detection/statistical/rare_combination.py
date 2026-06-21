@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import ClassVar
 
+from ...domain.models import CheckRequirement
 from ...domain.values import clean
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -10,6 +12,7 @@ class RareCombinationDetector:
     """Rare stage+segment combination detector. id='rare_combination'."""
 
     id: str = "rare_combination"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Rare stage/segment combination check", ("StageName", "Segment__c"), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only when exactly StageName+Segment__c present and >=8 records."""

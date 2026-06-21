@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
+from ...domain.models import CheckRequirement
 from ...domain.values import clean, parse_float
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -8,6 +11,7 @@ class InvalidStageDetector:
     """Opportunity stage not in policy allowlist. id='invalid_stage'."""
 
     id: str = "invalid_stage"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Invalid-stage check", ("StageName",), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only for Opportunity; emit if StageName present, value truthy and not valid."""
@@ -42,6 +46,7 @@ class MissingAccountDetector:
     """Opportunity missing AccountId. id='missing_account'."""
 
     id: str = "missing_account"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Missing-account check", ("AccountId",), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only for Opportunity; emit when AccountId field present but empty value."""
@@ -74,6 +79,7 @@ class ClosedWonContractDetector:
     """Closed Won Opportunity missing Contract__c. id='missing_contract_closed_won'."""
 
     id: str = "missing_contract_closed_won"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Closed-Won-without-contract check", ("StageName", "Contract__c"), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only for Opportunity; requires both StageName+Contract__c fields."""
@@ -108,6 +114,7 @@ class NonPositiveAmountDetector:
     """Opportunity Amount <= 0. id='non_positive_amount'."""
 
     id: str = "non_positive_amount"
+    requirement: ClassVar[CheckRequirement | None] = CheckRequirement("Non-positive-amount check", ("Amount",), "opportunity")
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """Only for Opportunity; use parse_float for comparison."""

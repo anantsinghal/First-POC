@@ -12,6 +12,15 @@ Record = dict[str, str]
 """Type alias for a raw record as string-valued dict."""
 
 
+@dataclass(frozen=True)
+class CheckRequirement:
+    """Declares the fields a detector needs and the object it applies to (for coverage reporting)."""
+
+    label: str
+    requires: tuple[str, ...]
+    object_scope: str | None = None   # None = any object; else a lowercased object name
+
+
 def stable_hash(value: Any) -> str:
     """Return sha256 hex digest of json.dumps(value, sort_keys=True, default=str, separators=(',', ':'))."""
     encoded = json.dumps(value, sort_keys=True, default=str, separators=(",", ":")).encode()

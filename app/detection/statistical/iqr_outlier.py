@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from typing import ClassVar
+
+from ...domain.models import CheckRequirement
 from ...domain.values import numeric_values, parse_float
 from ..base import Candidate, DetectionContext, make_candidate
 
@@ -8,6 +11,7 @@ class IqrOutlierDetector:
     """Numeric IQR outlier detector. id='numeric_outlier'. Uses exact baseline quartile calc."""
 
     id: str = "numeric_outlier"
+    requirement: ClassVar[CheckRequirement | None] = None  # scans whatever numeric fields exist
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
         """For every field, if >=8 numeric values compute IQR 1.5 fences and flag outliers."""

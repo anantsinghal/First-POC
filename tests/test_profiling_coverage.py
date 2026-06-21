@@ -4,6 +4,7 @@ import csv
 from pathlib import Path
 
 from app.coverage.grader import CoverageGrader
+from app.detection.registry import build_default_registry
 from app.domain.enums import CoverageGrade
 from app.domain.values import clean
 from app.policy.field_policy import DEFAULT_POLICY
@@ -40,7 +41,7 @@ def test_coverage_grader_partial_missing_expected_fields():
     records, _ = _load_demo_records()
     partial_fields = ["Id", "Name", "StageName"]
     # use subset of records that have only these, but any records ok as long as fields
-    cov = CoverageGrader(DEFAULT_POLICY).grade("Opportunity", records, partial_fields)
+    cov = CoverageGrader(DEFAULT_POLICY, requirements=build_default_registry().requirements()).grade("Opportunity", records, partial_fields)
     assert cov.grade == CoverageGrade.PARTIAL
     assert "Contract__c" in cov.missing_fields or "AccountId" in cov.missing_fields
     assert any("Contract__c" in msg for msg in cov.suppressed_checks)
@@ -68,3 +69,15 @@ def test_profiler_profile_matches_baseline_numeric_and_count():
     assert "distinct_count" in amount
     assert "top_values" in amount
     assert "numeric" in amount
+
+
+def test_coverage_reports_closedate_dependent_checks():
+    """When CloseDate absent on Opportunity, grader with requirements reports CloseDate-dependent checks (e.g. Stale)."""
+    records, _ = _load_demo_records()
+    fields_without_close = ["Id", "Name", "StageName", "Amount", "AccountId", "Contract__c", "Segment__c"]
+    cov = CoverageGrader(
+        DEFAULT_POLICY,
+        requirements=build_default_registry().requirements(),
+    ).grade("Opportunity", records, fields_without_close)
+    assert any("CloseDate" in m for m in cov.suppressed_checks)
+    assert any("Stale-open" in m for m in cov.suppressed_checks)
