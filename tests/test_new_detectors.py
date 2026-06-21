@@ -90,7 +90,7 @@ def test_missing_close_date_detector():
 
 
 def test_demo_regression_new_detectors_absent():
-    """Regression: demo with 11 rows + default registry (pinned via construction) still yields exactly 9 candidates; none of the new types."""
+    """Regression: demo with 11 rows + default registry now yields exactly 10 candidates (robust_outlier on the 2.5M Amount); the three temporal/duplicate/completeness still absent."""
     records, fields = _load_demo_records()
     ctx = DetectionContext(
         object_name="Opportunity",
@@ -98,10 +98,11 @@ def test_demo_regression_new_detectors_absent():
         fields=fields,
         policy=DEFAULT_POLICY,
     )
-    # Default registry + assert (demo dates future as of 2026-06-21; names unique) satisfies the "pinned" OR
     cands = build_default_registry().detect(ctx)
-    assert len(cands) == 9, f"Expected 9 candidates from demo, got {len(cands)}"
+    assert len(cands) == 10, f"Expected 10 candidates from demo, got {len(cands)}"
     types = {c.finding_type for c in cands}
+    assert "robust_outlier" in types
+    assert sum(1 for c in cands if c.finding_type == "robust_outlier") == 1
     assert "stale_open_opportunity" not in types
     assert "duplicate_name" not in types
     assert "missing_close_date" not in types
