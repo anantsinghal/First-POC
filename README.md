@@ -7,7 +7,7 @@ A small, local proof of concept for the first trustworthy slice of the Salesforc
 - Manifest-backed, idempotent scan runs with an explicit coverage grade.
 - CSV/demo ingestion for `Account`, `Contact`, `Opportunity`, `Case`, or a custom object.
 - Deterministic checks: required values, invalid Opportunity stages, missing Opportunity account, Closed Won records without a contract, and non-positive amounts.
-- Explainable statistical candidates: numeric IQR outliers and rare field combinations.
+- Explainable statistical candidates: numeric IQR outliers, robust MAD (modified z-score) outliers, and rare field combinations.
 - Cross-field, temporal, and duplication checks: open Opportunities past their Close Date, possible duplicates by Name, and missing Close Dates.
 - Finding fingerprints and lifecycle state; reviewer feedback persists in SQLite.
 - A browser dashboard and JSON API.
