@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ..domain.models import Record, stable_hash
+from ..domain.schema import schema_from_salesforce_describe
 from ..domain.values import clean
 from ..salesforce.client import SalesforceClient
 from ..salesforce.session import SalesforceSession
@@ -36,6 +37,7 @@ class SalesforceObjectSource(DataSource):
     async def load(self) -> LoadedDataset:
         """Describe, filter fields, query, clean records to strings, compute deterministic source_hash via stable_hash."""
         describe = await self.client.describe_sobject(self.object_name)
+        schema = schema_from_salesforce_describe(describe)
         readable = {
             f.get("name")
             for f in describe.get("fields", [])
@@ -64,4 +66,5 @@ class SalesforceObjectSource(DataSource):
             fields=fields,
             records=cleaned,
             source_hash=source_hash,
+            schema=schema,
         )

@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from ..domain.models import Record
+
+if TYPE_CHECKING:
+    from ..domain.schema import ObjectSchema
 
 
 @dataclass(frozen=True)
@@ -15,6 +18,7 @@ class LoadedDataset:
     fields: list[str]
     records: list[Record]
     source_hash: str
+    schema: "ObjectSchema | None" = None
 
 
 class IngestionError(RuntimeError):

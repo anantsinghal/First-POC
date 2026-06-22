@@ -64,7 +64,8 @@ class ScanService:
                 candidates = []
             else:
                 ctx = DetectionContext(
-                    dataset.object_name, dataset.records, dataset.fields, self.policy, profile
+                    dataset.object_name, dataset.records, dataset.fields, self.policy, profile,
+                    schema=dataset.schema,
                 )
                 candidates = self.registry.detect(ctx)
             for c in candidates:

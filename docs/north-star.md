@@ -105,12 +105,31 @@ foundations).
 - **Throughout:** make the data-residency/topology decision (point 6.1) before building multi-tenant
   internals.
 
-## 8. Decisions to make now (so we don't pay for them later)
+## 8. Decisions — DECIDED
 
-1. **Data residency / topology** — do we commit to "raw data stays in the customer's boundary"?
-   (Strongly recommended for the enterprise + security goal.)
-2. **Read-only forever, or eventual approved write-back?** (Recommend read-only first.)
-3. **First target objects for proving value** — even though the engine is generic, we pick a few real
-   objects to demonstrate on first.
+1. **Deployment & data residency — DECIDED:** the application is **deployed inside the enterprise's
+   own servers** (single-tenant per enterprise). All data stays within the enterprise boundary by
+   construction; there is no cross-customer data and no vendor-held copy. This is the strongest posture.
+2. **Read-only first — DECIDED:** scans are read-only; any future write-back is preview + approval +
+   audit + rollback.
+3. **First target objects** — the engine is generic; we still pick a few real objects to demonstrate on.
+
+## 9. Scan-data handling — DECIDED (two tiers: keep the valuable, purge the raw)
+
+- **Durable store** (the enterprise's DB — PostgreSQL in production; SQLite in the POC): metadata
+  catalog, scan manifests, **findings + evidence**, reviewer feedback, learned patterns/models, and
+  **profiles as aggregates only** (counts, null-rates, distributions — never raw values).
+- **Ephemeral working data** (the raw records pulled for a scan): extract only the fields the checks
+  need (skip free-text/PII by default) → stage in a local encrypted columnar area (Parquet + DuckDB
+  or a staging schema) → analyze → persist only findings + aggregate profiles → **purge the raw
+  staging by default** (short, configurable retention only for re-runs/debug).
+- **Findings evidence** keeps only the few field values a reviewer needs; sensitive values are
+  masked/tokenized.
+- **Net effect:** at rest the system holds findings + metadata + aggregates, **not a standing copy of
+  the whole CRM** — small breach blast-radius, easy data-deletion, cheap storage.
+- **Secrets** (Salesforce tokens, DB creds) live in a secret store, never in the app database or logs.
+- **POC status:** already aligned — raw records are processed in memory and never persisted; only
+  manifest/coverage/profile/findings/feedback are stored. The columnar-staging-and-purge step is the
+  scale-up for very large objects; the Repository pattern localizes the SQLite→PostgreSQL swap.
 
 This document is the intent. When in doubt, it wins over any single implementation detail.

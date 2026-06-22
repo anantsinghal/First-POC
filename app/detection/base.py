@@ -4,19 +4,21 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from ..domain.models import Candidate, Profile, Record
+from ..domain.schema import ObjectSchema
 from ..domain.values import clean, display_name
 from ..policy.field_policy import FieldPolicy
 
 
 @dataclass(frozen=True)
 class DetectionContext:
-    """Context passed to detectors: data slice + policy + optional profile."""
+    """Context passed to detectors: data slice + policy + optional profile + optional schema (for metadata-driven engines)."""
 
     object_name: str
     records: list[Record]
     fields: list[str]
     policy: FieldPolicy
     profile: Profile | None = None
+    schema: ObjectSchema | None = None
 
     @property
     def field_set(self) -> set[str]:

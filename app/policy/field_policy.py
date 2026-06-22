@@ -44,6 +44,9 @@ class FieldPolicy:
             "missing_close_date": (Severity.MEDIUM, 0.85, 0.60),
             "pattern_break": (Severity.MEDIUM, 0.80, 0.70),
             "ml_anomaly": (Severity.MEDIUM, 0.70, 0.65),
+            "required_missing": (Severity.HIGH, 0.95, 0.90),
+            "picklist_invalid": (Severity.HIGH, 0.97, 0.93),
+            "reference_missing": (Severity.HIGH, 0.93, 0.88),
         }
         return values[rule]
 
