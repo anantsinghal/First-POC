@@ -50,9 +50,14 @@ def make_candidate(
     title: str,
     field_name: str | None,
     evidence: dict[str, Any],
+    *,
+    confidence: float | None = None,
+    priority: float | None = None,
 ) -> Candidate:
-    """Build Candidate using policy for severity/conf/pri; mirrors old create_candidate but no id/status."""
-    severity, confidence, priority = ctx.policy.severity_for(rule)
+    """Build Candidate using policy for severity/conf/pri; supports per-finding overrides for patterns/ML (backward compatible)."""
+    severity, def_conf, def_pri = ctx.policy.severity_for(rule)
+    conf = confidence if confidence is not None else def_conf
+    pri = priority if priority is not None else def_pri
     return Candidate(
         object_name=ctx.object_name,
         record_id=clean(record.get("Id")),
@@ -60,8 +65,8 @@ def make_candidate(
         finding_type=rule,
         field_name=field_name,
         severity=severity,
-        confidence=confidence,
-        priority=priority,
+        confidence=conf,
+        priority=pri,
         title=title,
         evidence=evidence,
     )

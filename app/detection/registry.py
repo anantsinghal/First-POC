@@ -14,6 +14,7 @@ from .rules.opportunity import (
 )
 from .rules.required_fields import RequiredFieldsDetector
 from .rules.temporal import StaleOpenOpportunityDetector
+from .patterns.association import AssociationPatternDetector
 from .statistical.iqr_outlier import IqrOutlierDetector
 from .statistical.mad_outlier import MadOutlierDetector
 from .statistical.rare_combination import RareCombinationDetector
@@ -62,4 +63,5 @@ def build_default_registry() -> DetectorRegistry:
         StaleOpenOpportunityDetector(),
         DuplicateNameDetector(),
         MissingCloseDateDetector(),
+        AssociationPatternDetector(),
     ])

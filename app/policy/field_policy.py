@@ -42,6 +42,7 @@ class FieldPolicy:
             "stale_open_opportunity": (Severity.HIGH, 0.90, 0.88),
             "duplicate_name": (Severity.MEDIUM, 0.80, 0.65),
             "missing_close_date": (Severity.MEDIUM, 0.85, 0.60),
+            "pattern_break": (Severity.MEDIUM, 0.80, 0.70),
         }
         return values[rule]
 
