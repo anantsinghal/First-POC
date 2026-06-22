@@ -8,11 +8,6 @@ from .ml.isolation_forest import IsolationForestDetector
 from .patterns.association import AssociationPatternDetector
 from .rules.duplicates import DuplicateNameDetector
 from .rules.interpreter import RuleInterpreterDetector
-from .rules.opportunity import (
-    InvalidStageDetector,
-    MissingAccountDetector,
-)
-from .rules.required_fields import RequiredFieldsDetector
 from .schema_driven.picklist_validity import PicklistValidityDetector
 from .schema_driven.referential_integrity import ReferentialIntegrityDetector
 from .schema_driven.required_field import RequiredFieldDetector
@@ -64,9 +59,6 @@ class DetectorRegistry:
 def build_default_registry() -> DetectorRegistry:
     """Return registry with the 7 POC + 3 new detectors appended (preserving original order)."""
     return DetectorRegistry([
-        RequiredFieldsDetector(),
-        InvalidStageDetector(),
-        MissingAccountDetector(),
         IqrOutlierDetector(),
         MadOutlierDetector(),
         RareCombinationDetector(),

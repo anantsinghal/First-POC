@@ -45,5 +45,51 @@
     "when": [],
     "expect": {"field": "CloseDate", "op": "not_blank"},
     "explanation": "Opportunity has no CloseDate; forecasting and stage SLAs cannot be evaluated."
+  },
+  {
+    "rule_id": "opp_invalid_stage",
+    "object_name": "Opportunity",
+    "finding_type": "invalid_stage",
+    "title": "Unknown Opportunity stage",
+    "field_name": "StageName",
+    "when": [{"field": "StageName", "op": "not_blank"}],
+    "expect": {
+      "field": "StageName",
+      "op": "in",
+      "value": [
+        "Prospecting",
+        "Qualification",
+        "Needs Analysis",
+        "Value Proposition",
+        "Id. Decision Makers",
+        "Perception Analysis",
+        "Proposal/Price Quote",
+        "Negotiation/Review",
+        "Closed Won",
+        "Closed Lost",
+        "Proposal"
+      ]
+    },
+    "explanation": "StageName is not in the org's allowed stage values."
+  },
+  {
+    "rule_id": "opp_missing_account",
+    "object_name": "Opportunity",
+    "finding_type": "missing_account",
+    "title": "Opportunity has no Account",
+    "field_name": "AccountId",
+    "when": [],
+    "expect": {"field": "AccountId", "op": "not_blank"},
+    "explanation": "The record has no parent AccountId in the extracted data."
+  },
+  {
+    "rule_id": "opp_required_name",
+    "object_name": "Opportunity",
+    "finding_type": "missing_required",
+    "title": "Missing required Name",
+    "field_name": "Name",
+    "when": [],
+    "expect": {"field": "Name", "op": "not_blank"},
+    "explanation": "Name is empty."
   }
 ]

@@ -7,7 +7,6 @@ import pytest
 
 from app.detection.base import DetectionContext
 from app.detection.registry import build_default_registry
-from app.detection.rules.required_fields import RequiredFieldsDetector
 from app.domain.values import clean
 from app.policy.field_policy import DEFAULT_POLICY
 
@@ -42,19 +41,6 @@ def test_default_registry_detects_expected_demo_findings():
     assert "missing_account" in types
     assert "missing_contract_closed_won" in types
     assert "non_positive_amount" in types
-
-
-def test_required_fields_detector_returns_empty_when_field_absent():
-    """When required field (Name) not in ctx.fields, detector emits nothing."""
-    records, _ = _load_demo_records()
-    ctx = DetectionContext(
-        object_name="Opportunity",
-        records=records,
-        fields=["Id", "StageName"],  # no Name
-        policy=DEFAULT_POLICY,
-    )
-    det = RequiredFieldsDetector()
-    assert det.detect(ctx) == []
 
 
 def test_fingerprint_stability():

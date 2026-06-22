@@ -29,10 +29,6 @@ class DetectionContext:
         """Whether the given field name is present in the input."""
         return name in self.field_set
 
-    def is_opportunity(self) -> bool:
-        """True if object_name is Opportunity (case-insensitive)."""
-        return self.object_name.lower() == "opportunity"
-
 
 @runtime_checkable
 class Detector(Protocol):

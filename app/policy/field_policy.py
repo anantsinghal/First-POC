@@ -5,17 +5,9 @@ from dataclasses import dataclass
 from ..domain.enums import Severity
 
 
-VALID_OPPORTUNITY_STAGES: frozenset[str] = frozenset({
-    "Prospecting", "Qualification", "Needs Analysis", "Value Proposition",
-    "Id. Decision Makers", "Perception Analysis", "Proposal/Price Quote",
-    "Negotiation/Review", "Closed Won", "Closed Lost", "Proposal",
-})
-"""Allowed Opportunity StageName values per policy."""
-
-
 @dataclass(frozen=True)
 class FieldPolicy:
-    """Policy defining expected fields, valid stages, and rule severity/score mapping."""
+    """Policy defining expected fields and rule severity/score mapping."""
 
     def expected_fields(self, object_name: str) -> set[str]:
         """Return minimal expected fields for object; Id always, plus Opportunity core fields."""
@@ -23,10 +15,6 @@ class FieldPolicy:
         if object_name.lower() == "opportunity":
             expected |= {"Name", "StageName", "Amount", "AccountId", "Contract__c"}
         return expected
-
-    def valid_stages(self) -> frozenset[str]:
-        """Return the allowed stages for Opportunity objects."""
-        return VALID_OPPORTUNITY_STAGES
 
     def severity_for(self, rule: str) -> tuple[Severity, float, float]:
         """Return (Severity, confidence, priority) for the named rule, per POC table."""

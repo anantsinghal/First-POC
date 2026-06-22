@@ -76,3 +76,40 @@ def test_coverage_requirements_contract():
     # at least one should require Contract__c
     requires_contract = any("Contract__c" in (r.requires or ()) for r in reqs)
     assert requires_contract
+
+
+def test_new_rules_fire_and_do_not_fire():
+    """The three newly catalogued rules (invalid_stage, missing_account, missing_required) fire on violations and do not on valid data."""
+    # Bad data: out-of-list stage, empty AccountId, empty Name
+    bad_records = [
+        {"Id": "bad1", "StageName": "NotAStage", "AccountId": "", "Name": ""},
+    ]
+    fields = ["Id", "StageName", "AccountId", "Name"]
+    ctx_bad = DetectionContext(
+        object_name="Opportunity",
+        records=bad_records,
+        fields=fields,
+        policy=DEFAULT_POLICY,
+    )
+    det = RuleInterpreterDetector(load_rule_catalog())
+    cands_bad = det.detect(ctx_bad)
+    types_bad = {c.finding_type for c in cands_bad}
+    assert "invalid_stage" in types_bad
+    assert "missing_account" in types_bad
+    assert "missing_required" in types_bad
+
+    # Good data: valid stage, present AccountId, present Name
+    good_records = [
+        {"Id": "good1", "StageName": "Closed Won", "AccountId": "acc1", "Name": "GoodName"},
+    ]
+    ctx_good = DetectionContext(
+        object_name="Opportunity",
+        records=good_records,
+        fields=fields,
+        policy=DEFAULT_POLICY,
+    )
+    cands_good = det.detect(ctx_good)
+    types_good = {c.finding_type for c in cands_good}
+    assert "invalid_stage" not in types_good
+    assert "missing_account" not in types_good
+    assert "missing_required" not in types_good
