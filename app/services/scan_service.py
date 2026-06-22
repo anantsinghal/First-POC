@@ -66,6 +66,7 @@ class ScanService:
                 ctx = DetectionContext(
                     dataset.object_name, dataset.records, dataset.fields, self.policy, profile,
                     schema=dataset.schema,
+                    related_ids=dataset.related_ids or {},
                 )
                 candidates = self.registry.detect(ctx)
             for c in candidates:

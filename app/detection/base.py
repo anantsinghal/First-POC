@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from ..domain.models import Candidate, Profile, Record
@@ -19,6 +19,7 @@ class DetectionContext:
     policy: FieldPolicy
     profile: Profile | None = None
     schema: ObjectSchema | None = None
+    related_ids: dict[str, frozenset[str]] = field(default_factory=dict)
 
     @property
     def field_set(self) -> set[str]:

@@ -9,6 +9,7 @@ from .patterns.association import AssociationPatternDetector
 from .rules.duplicates import DuplicateNameDetector
 from .rules.interpreter import RuleInterpreterDetector
 from .schema_driven.picklist_validity import PicklistValidityDetector
+from .graph.orphan_reference import OrphanReferenceDetector
 from .schema_driven.referential_integrity import ReferentialIntegrityDetector
 from .schema_driven.required_field import RequiredFieldDetector
 from .statistical.iqr_outlier import IqrOutlierDetector
@@ -69,4 +70,5 @@ def build_default_registry() -> DetectorRegistry:
         PicklistValidityDetector(),
         ReferentialIntegrityDetector(),
         RuleInterpreterDetector(load_rule_catalog()),
+        OrphanReferenceDetector(),
     ])
