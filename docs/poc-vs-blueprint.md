@@ -23,9 +23,9 @@ what this POC built.
 | Rule Engine (deterministic) | ✅ built — 8 rule detectors | `app/detection/rules/` |
 | Data Profiler | ✅ built | `app/profiling/` |
 | Statistical candidates (IQR, MAD, rare-combination) | ✅ built | `app/detection/statistical/` |
-| **Pattern Miner (association rules: support/confidence/lift)** | ❌ **not built** — only a weak rare-combination proxy | — |
+| **Pattern Miner (association rules: support/confidence/lift)** | ✅ **built** — `pattern_break` with base-rate margin guard | `app/detection/patterns/` |
 | Graph Analyzer (orphans, missing children) | ❌ not built (`missing_account` is a single-field proxy) | — |
-| **ML Anomaly Scorer (Isolation Forest, feature vectors, cohorts)** | ❌ **not built** | — |
+| **ML Anomaly Scorer (Isolation Forest)** | ✅ **built** — `ml_anomaly`, reproducible + explainable (per-object; cohorts pending) | `app/detection/ml/` |
 | Explanation Engine | ✅ built — `why` + evidence on every finding | `app/detection/base.py` (`make_candidate`) |
 | Findings Store + Review UI + feedback | ✅ built | `app/persistence/`, `app/static/`, `app/api/` |
 
@@ -43,11 +43,13 @@ what this POC built.
 
 ## What "do we have ML?" honestly means here
 
-**No.** The IQR and MAD detectors are classical statistics computed per scan, not trained models. The
-blueprint's "AI/ML" lives in two components this POC does **not** yet have: the **Pattern Miner**
-(association-rule mining — the blueprint calls it "critical") and the **ML Anomaly Scorer** (Isolation
-Forest over engineered, per-cohort feature vectors). The labeled reviewer feedback and stable finding
-fingerprints already in the POC are the training-data foundation those layers will consume.
+**Now: partially.** The Pattern Miner (`pattern_break`, association-rule mining) and the ML Anomaly
+Scorer (`ml_anomaly`, Isolation Forest — reproducible and explainable) are built and registered. What
+remains for the full vision is **schema-agnostic generalization**: today's detectors still know about
+specific objects/fields (e.g. the Opportunity rules), whereas the product must be driven entirely by
+the org's metadata so it works on any object — see [`north-star.md`](north-star.md) §4. The labeled
+reviewer feedback and stable finding fingerprints are the training-data foundation for the supervised
+re-ranking layer that comes later.
 
 ## Recommended next slices (additive — each is a new detector Strategy in the existing registry)
 

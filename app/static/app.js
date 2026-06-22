@@ -8,6 +8,8 @@ const TYPE_LABELS = {
   robust_outlier:'Robust (MAD) outlier', rare_combination:'Rare combination',
   stale_open_opportunity:'Stale open opportunity', duplicate_name:'Possible duplicate',
   missing_close_date:'Missing close date',
+  pattern_break:'Learned-pattern break',
+  ml_anomaly:'ML anomaly (Isolation Forest)',
 };
 const humanizeType = (t) => TYPE_LABELS[t] || t.replace(/_/g,' ').replace(/\b\w/g, c=>c.toUpperCase());
 
