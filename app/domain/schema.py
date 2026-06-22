@@ -15,6 +15,9 @@ class FieldType(str, Enum):
     PICKLIST = "picklist"
     ID = "id"
     OTHER = "other"
+    EMAIL = "email"
+    PHONE = "phone"
+    URL = "url"
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,7 @@ class FieldDescriptor:
     reference_to: tuple[str, ...] = ()
     is_name_field: bool = False
     is_unique: bool = False
+    length: int | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +54,11 @@ class ObjectSchema:
         return [fd for fd in self.fields.values()
                 if fd.data_type == FieldType.REFERENCE]
 
+    def format_fields(self) -> list[FieldDescriptor]:
+        """Fields whose data_type is EMAIL, PHONE, or URL (for format validation)."""
+        return [fd for fd in self.fields.values()
+                if fd.data_type in {FieldType.EMAIL, FieldType.PHONE, FieldType.URL}]
+
 
 def schema_from_salesforce_describe(describe: dict[str, Any]) -> ObjectSchema:
     """Build ObjectSchema from a Salesforce /describe response."""
@@ -69,6 +78,12 @@ def schema_from_salesforce_describe(describe: dict[str, Any]) -> ObjectSchema:
             data_type = FieldType.DATE
         elif ftype in ("double", "int", "currency", "percent"):
             data_type = FieldType.NUMBER
+        elif ftype == "email":
+            data_type = FieldType.EMAIL
+        elif ftype == "phone":
+            data_type = FieldType.PHONE
+        elif ftype == "url":
+            data_type = FieldType.URL
         else:
             data_type = FieldType.STRING
 
@@ -95,6 +110,7 @@ def schema_from_salesforce_describe(describe: dict[str, Any]) -> ObjectSchema:
             reference_to=reference_to,
             is_name_field=is_name_field,
             is_unique=is_unique,
+            length=field.get("length"),
         )
         if fd.name:
             fields[fd.name] = fd
@@ -124,6 +140,7 @@ def schema_from_dict(data: dict[str, Any]) -> ObjectSchema:
             reference_to=ref_to,
             is_name_field=bool(f.get("is_name_field", False)),
             is_unique=bool(f.get("is_unique", False)),
+            length=f.get("length"),
         )
         if fd.name:
             fields[fd.name] = fd

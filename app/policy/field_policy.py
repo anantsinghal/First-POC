@@ -36,6 +36,7 @@ class FieldPolicy:
             "picklist_invalid": (Severity.HIGH, 0.97, 0.93),
             "reference_missing": (Severity.HIGH, 0.93, 0.88),
             "orphan_reference": (Severity.HIGH, 0.90, 0.85),
+            "invalid_format": (Severity.MEDIUM, 0.90, 0.75),
         }
         return values[rule]
 
