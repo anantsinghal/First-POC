@@ -2,6 +2,11 @@
 
 A small, local proof of concept for the first trustworthy slice of the Salesforce anomaly-detection blueprint. It connects through the Salesforce REST, Tooling, and Metadata SOAP APIs directly (no Salesforce CLI), or accepts a CSV export for offline demos. It creates an immutable scan manifest and coverage report, profiles the data, produces explainable findings, and lets a reviewer label them.
 
+> **Where this fits:** the full product blueprint lives in [`docs/blueprint/`](docs/blueprint/README.md).
+> This repo is its trustworthy-*foundation* slice (rules + statistics + coverage + review). The
+> pattern-mining and ML layers are designed but not yet built — see
+> [`docs/poc-vs-blueprint.md`](docs/poc-vs-blueprint.md) for the exact gap and the recommended build order.
+
 ## What is included
 
 - Manifest-backed, idempotent scan runs with an explicit coverage grade.
