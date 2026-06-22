@@ -1,0 +1,49 @@
+[
+  {
+    "rule_id": "opp_closed_won_requires_contract",
+    "object_name": "Opportunity",
+    "finding_type": "missing_contract_closed_won",
+    "title": "Closed Won Opportunity has no contract",
+    "field_name": "Contract__c",
+    "when": [
+      {"field": "StageName", "op": "equals", "value": "Closed Won"}
+    ],
+    "expect": {"field": "Contract__c", "op": "not_blank"},
+    "explanation": "POC policy expects Contract__c for Closed Won opportunities."
+  },
+  {
+    "rule_id": "opp_non_positive_amount",
+    "object_name": "Opportunity",
+    "finding_type": "non_positive_amount",
+    "title": "Opportunity Amount is zero or negative",
+    "field_name": "Amount",
+    "when": [
+      {"field": "Amount", "op": "lte", "value": 0}
+    ],
+    "expect": null,
+    "explanation": "POC policy treats non-positive opportunity value as reviewable."
+  },
+  {
+    "rule_id": "opp_stale_open",
+    "object_name": "Opportunity",
+    "finding_type": "stale_open_opportunity",
+    "title": "Open Opportunity past its Close Date",
+    "field_name": "CloseDate",
+    "when": [
+      {"field": "StageName", "op": "not_in", "value": ["Closed Won", "Closed Lost"]},
+      {"field": "CloseDate", "op": "before", "value": "today"}
+    ],
+    "expect": null,
+    "explanation": "Opportunity is still open but its CloseDate is in the past; the forecast or stage likely needs updating."
+  },
+  {
+    "rule_id": "opp_missing_close_date",
+    "object_name": "Opportunity",
+    "finding_type": "missing_close_date",
+    "title": "Opportunity has no Close Date",
+    "field_name": "CloseDate",
+    "when": [],
+    "expect": {"field": "CloseDate", "op": "not_blank"},
+    "explanation": "Opportunity has no CloseDate; forecasting and stage SLAs cannot be evaluated."
+  }
+]

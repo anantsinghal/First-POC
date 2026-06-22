@@ -80,4 +80,4 @@ def test_coverage_reports_closedate_dependent_checks():
         requirements=build_default_registry().requirements(),
     ).grade("Opportunity", records, fields_without_close)
     assert any("CloseDate" in m for m in cov.suppressed_checks)
-    assert any("Stale-open" in m for m in cov.suppressed_checks)
+    assert any('past its Close Date' in m for m in cov.suppressed_checks)

@@ -4,24 +4,23 @@ from collections.abc import Iterable
 
 from ..domain.models import CheckRequirement
 from .base import Candidate, DetectionContext, Detector
-from .rules.completeness import MissingCloseDateDetector
-from .rules.duplicates import DuplicateNameDetector
-from .rules.opportunity import (
-    ClosedWonContractDetector,
-    InvalidStageDetector,
-    MissingAccountDetector,
-    NonPositiveAmountDetector,
-)
-from .rules.required_fields import RequiredFieldsDetector
-from .rules.temporal import StaleOpenOpportunityDetector
 from .ml.isolation_forest import IsolationForestDetector
 from .patterns.association import AssociationPatternDetector
+from .rules.duplicates import DuplicateNameDetector
+from .rules.interpreter import RuleInterpreterDetector
+from .rules.opportunity import (
+    InvalidStageDetector,
+    MissingAccountDetector,
+)
+from .rules.required_fields import RequiredFieldsDetector
 from .schema_driven.picklist_validity import PicklistValidityDetector
 from .schema_driven.referential_integrity import ReferentialIntegrityDetector
 from .schema_driven.required_field import RequiredFieldDetector
 from .statistical.iqr_outlier import IqrOutlierDetector
 from .statistical.mad_outlier import MadOutlierDetector
 from .statistical.rare_combination import RareCombinationDetector
+
+from ..policy.rules import load_rule_catalog
 
 
 class DetectorRegistry:
@@ -49,8 +48,17 @@ class DetectorRegistry:
         return results
 
     def requirements(self) -> list[CheckRequirement]:
-        """Return declared requirements for detectors that have them (in registration order)."""
-        return [d.requirement for d in self._detectors if getattr(d, "requirement", None) is not None]
+        """Return declared requirements for detectors that have them (in registration order).
+        Also collects from detectors that expose coverage_requirements() (e.g. RuleInterpreterDetector).
+        """
+        reqs: list[CheckRequirement] = []
+        for d in self._detectors:
+            cr = getattr(d, "coverage_requirements", None)
+            if callable(cr):
+                reqs.extend(cr())
+            elif getattr(d, "requirement", None) is not None:
+                reqs.append(d.requirement)
+        return reqs
 
 
 def build_default_registry() -> DetectorRegistry:
@@ -59,17 +67,14 @@ def build_default_registry() -> DetectorRegistry:
         RequiredFieldsDetector(),
         InvalidStageDetector(),
         MissingAccountDetector(),
-        ClosedWonContractDetector(),
-        NonPositiveAmountDetector(),
         IqrOutlierDetector(),
         MadOutlierDetector(),
         RareCombinationDetector(),
-        StaleOpenOpportunityDetector(),
         DuplicateNameDetector(),
-        MissingCloseDateDetector(),
         AssociationPatternDetector(),
         IsolationForestDetector(),
         RequiredFieldDetector(),
         PicklistValidityDetector(),
         ReferentialIntegrityDetector(),
+        RuleInterpreterDetector(load_rule_catalog()),
     ])

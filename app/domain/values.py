@@ -14,10 +14,12 @@ def display_name(record: dict[str, str]) -> str:
     return clean(record.get("Name")) or clean(record.get("Id"))
 
 
-def parse_float(raw: str | None) -> float | None:
+def parse_float(raw: str | int | float | None) -> float | None:
     """Parse cleaned value as float (handling commas), return None on failure."""
     try:
-        s = clean(raw)
+        if raw is None:
+            return None
+        s = clean(str(raw))
         if not s:
             return None
         return float(s.replace(",", ""))
