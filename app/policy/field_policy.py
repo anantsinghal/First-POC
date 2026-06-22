@@ -43,6 +43,7 @@ class FieldPolicy:
             "duplicate_name": (Severity.MEDIUM, 0.80, 0.65),
             "missing_close_date": (Severity.MEDIUM, 0.85, 0.60),
             "pattern_break": (Severity.MEDIUM, 0.80, 0.70),
+            "ml_anomaly": (Severity.MEDIUM, 0.70, 0.65),
         }
         return values[rule]
 
