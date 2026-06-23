@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
 from app.ingestion.base import IngestionError
 from app.ingestion.csv_source import CsvSource
+from app.ingestion.multi_csv_source import MultiCsvSource
 from app.ingestion.salesforce_source import SalesforceObjectSource
 from app.salesforce import SAFE_API_NAME, SalesforceClient, SalesforceError, session_from_environment
 from app.services.errors import NotFoundError
@@ -41,6 +43,34 @@ async def upload_scan(
         raise HTTPException(413, "POC upload limit is 25 MB")
     source = CsvSource(
         raw_bytes=raw, object_name=object_name, source_name=file.filename or "upload.csv"
+    )
+    try:
+        return await container.scan_service.run_scan(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+
+
+@router.post("/api/scans/multi")
+async def multi_scan(
+    primary_object: str = Query(min_length=1, max_length=80),
+    files: list[UploadFile] = File(...),
+    container: Container = Depends(get_container),
+) -> dict[str, Any]:
+    """Run a scan over a primary CSV plus related object CSV files."""
+    collected: list[tuple[str, bytes]] = []
+    for file in files:
+        if not (file.filename or "").lower().endswith(".csv"):
+            raise HTTPException(400, "Upload CSV files")
+        raw = await file.read()
+        if len(raw) > 25_000_000:
+            raise HTTPException(413, "POC upload limit is 25 MB per file")
+        object_name = Path(file.filename or "").stem
+        collected.append((object_name, raw))
+
+    source = MultiCsvSource(
+        primary_object=primary_object,
+        files=collected,
+        source_name=f"multi:{primary_object}+{len(collected)-1} related",
     )
     try:
         return await container.scan_service.run_scan(source)
