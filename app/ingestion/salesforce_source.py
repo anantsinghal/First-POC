@@ -8,11 +8,19 @@ from ..salesforce.session import SalesforceSession
 from .base import DataSource, IngestionError, LoadedDataset
 
 
-DEFAULT_SF_POLICY_FIELDS: list[str] = [
-    "Id", "Name", "StageName", "Amount", "AccountId",
-    "Contract__c", "Segment__c", "CloseDate",
-]
-"""Default policy fields used in baseline scan_salesforce (Id must be present for trustworthy scan)."""
+EXCLUDED_FIELD_TYPES = {
+    "address",
+    "location",
+    "base64",
+    "encryptedstring",
+    "textarea",
+    "complexvalue",
+    "anytype",
+}
+"""Salesforce field types skipped by default for PII minimization and query safety."""
+
+MAX_QUERY_FIELDS = 100
+"""Maximum number of fields selected from describe for a default Salesforce scan."""
 
 
 class SalesforceObjectSource(DataSource):
@@ -25,14 +33,14 @@ class SalesforceObjectSource(DataSource):
         session: SalesforceSession,
         object_name: str,
         max_records: int = 500,
-        policy_fields: list[str] = DEFAULT_SF_POLICY_FIELDS,
+        fields: list[str] | None = None,
     ) -> None:
         """Store client/session and params; load() performs describe/query + cleaning."""
         self.client = client
         self.session = session
         self.object_name = object_name
         self.max_records = max_records
-        self.policy_fields = policy_fields
+        self.fields = fields
 
     async def load(self) -> LoadedDataset:
         """Describe, filter fields, query, clean records to strings, compute deterministic source_hash via stable_hash."""
@@ -43,12 +51,26 @@ class SalesforceObjectSource(DataSource):
             for f in describe.get("fields", [])
             if f.get("name") and f.get("queryable")
         }
-        fields = [f for f in self.policy_fields if f in readable]
-        if "Id" not in fields:
+        if self.fields is not None:
+            selected = [f for f in self.fields if f in readable]
+        else:
+            selected = [
+                f["name"]
+                for f in describe.get("fields", [])
+                if f.get("queryable")
+                and f.get("name")
+                and (f.get("type") or "").lower() not in EXCLUDED_FIELD_TYPES
+                and "." not in f["name"]
+            ]
+        if "Id" not in selected:
             raise IngestionError(
                 "The integration user cannot query Id for this object; no trustworthy scan is possible.",
                 status_code=422,
             )
+        fields = ["Id", *[f for f in selected if f != "Id"]]
+        if len(fields) > MAX_QUERY_FIELDS:
+            # POC cap: keep Id plus the first describe-ordered fields to avoid overly wide SOQL.
+            fields = fields[:MAX_QUERY_FIELDS]
         records = await self.client.query_records(
             f"SELECT {', '.join(fields)} FROM {self.object_name}",
             max_records=self.max_records,
