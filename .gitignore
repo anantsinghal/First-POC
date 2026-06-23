@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 data/*.db
 data/uploads/
+# Never commit real secrets; keep the example template tracked.
+.env
+.env.*
+!.env.example
