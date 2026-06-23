@@ -20,6 +20,7 @@ class LoadedDataset:
     source_hash: str
     schema: "ObjectSchema | None" = None
     related_ids: dict[str, frozenset[str]] | None = None
+    related_records: dict[str, list[Record]] | None = None
 
 
 class IngestionError(RuntimeError):

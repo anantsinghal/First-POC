@@ -20,6 +20,7 @@ class DetectionContext:
     profile: Profile | None = None
     schema: ObjectSchema | None = None
     related_ids: dict[str, frozenset[str]] = field(default_factory=dict)
+    related_records: dict[str, list[Record]] = field(default_factory=dict)
 
     @property
     def field_set(self) -> set[str]:

@@ -6,6 +6,7 @@ from ..coverage.grader import CoverageGrader
 from ..detection.base import DetectionContext
 from ..detection.registry import DetectorRegistry
 from ..domain.enums import CoverageGrade
+from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
 from ..persistence.repositories import CoverageRepository, FindingRepository, ScanRepository
@@ -63,10 +64,15 @@ class ScanService:
             if coverage.grade == CoverageGrade.BLOCKED:
                 candidates = []
             else:
+                related_ids = dataset.related_ids or {
+                    obj: frozenset(clean(r.get("Id")) for r in recs if clean(r.get("Id")))
+                    for obj, recs in (dataset.related_records or {}).items()
+                }
                 ctx = DetectionContext(
                     dataset.object_name, dataset.records, dataset.fields, self.policy, profile,
                     schema=dataset.schema,
-                    related_ids=dataset.related_ids or {},
+                    related_ids=related_ids,
+                    related_records=dataset.related_records or {},
                 )
                 candidates = self.registry.detect(ctx)
             for c in candidates:

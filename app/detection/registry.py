@@ -10,6 +10,7 @@ from .rules.duplicates import DuplicateNameDetector
 from .rules.interpreter import RuleInterpreterDetector
 from .schema_driven.picklist_validity import PicklistValidityDetector
 from .graph.orphan_reference import OrphanReferenceDetector
+from .graph.missing_children import MissingChildrenDetector
 from .schema_driven.format_validity import FormatValidityDetector
 from .schema_driven.referential_integrity import ReferentialIntegrityDetector
 from .schema_driven.required_field import RequiredFieldDetector
@@ -73,4 +74,5 @@ def build_default_registry() -> DetectorRegistry:
         RuleInterpreterDetector(load_rule_catalog()),
         OrphanReferenceDetector(),
         FormatValidityDetector(),
+        MissingChildrenDetector(),
     ])
