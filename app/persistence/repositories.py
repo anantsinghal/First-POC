@@ -54,14 +54,14 @@ class ScanRepository:
     def list(self, conn: sqlite3.Connection, limit: int = 50) -> list[dict[str, Any]]:
         """List recent scans, serialised."""
         rows = conn.execute(
-            "SELECT * FROM scan_manifests ORDER BY created_at DESC LIMIT ?",
+            "SELECT * FROM scan_manifests ORDER BY created_at DESC, rowid DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [serialise_row(row) for row in rows]
 
     def latest_id(self, conn: sqlite3.Connection) -> str | None:
         """Return most recent scan id or None."""
-        row = conn.execute("SELECT id FROM scan_manifests ORDER BY created_at DESC LIMIT 1").fetchone()
+        row = conn.execute("SELECT id FROM scan_manifests ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
         return row["id"] if row else None
 
     def count(self, conn: sqlite3.Connection) -> int:
@@ -212,7 +212,7 @@ class FindingRepository:
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         rows = conn.execute(
-            f"SELECT * FROM findings {where} ORDER BY priority DESC, last_seen_at DESC",
+            f"SELECT * FROM findings {where} ORDER BY priority DESC, last_seen_at DESC, rowid DESC",
             params,
         ).fetchall()
         return [serialise_row(row) for row in rows]
@@ -265,7 +265,7 @@ class FeedbackRepository:
     def list_for_finding(self, conn: sqlite3.Connection, finding_id: str) -> list[dict[str, Any]]:
         """List feedback for a finding, newest first (plain dicts)."""
         rows = conn.execute(
-            "SELECT * FROM feedback WHERE finding_id=? ORDER BY created_at DESC",
+            "SELECT * FROM feedback WHERE finding_id=? ORDER BY created_at DESC, rowid DESC",
             (finding_id,),
         ).fetchall()
         return [dict(row) for row in rows]
@@ -294,7 +294,7 @@ class AuditRepository:
     def list(self, conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
         """Return recent audit entries (newest first), with detail parsed via serialise_row."""
         rows = conn.execute(
-            "SELECT * FROM audit_log ORDER BY ts DESC LIMIT ?",
+            "SELECT * FROM audit_log ORDER BY ts DESC, rowid DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [serialise_row(row) for row in rows]
