@@ -2,6 +2,20 @@
 
 The POC uses a direct `httpx` connector: it does not call `sf`, `sfdx`, or any CLI. It should be enabled only for a sandbox or developer org at first.
 
+## Auth modes (both supported by `session_from_environment`)
+
+- **Production — OAuth client-credentials (recommended):** set `SF_LOGIN_URL` (the org's **My Domain**,
+  e.g. `https://carhuborg.my.salesforce.com`), `SF_CLIENT_ID`, and `SF_CLIENT_SECRET`. Works with a
+  **Connected App** or a newer **External Client App (ECA)** that has the client-credentials flow
+  enabled and a dedicated least-privilege, read-only **Run-As** user. The app exchanges these for a
+  short-lived token per request (`grant_type=client_credentials` → `{My Domain}/services/oauth2/token`).
+  This is the real-time mechanism; do not rely on CLI tokens in production.
+- **Dev/test only — pre-issued access token:** set `SF_INSTANCE_URL` + `SF_ACCESS_TOKEN` (e.g. from
+  `sf org display`). If both are present they take precedence over the client-credentials vars. Tokens
+  are short-lived; for quick local testing only.
+
+Store secrets in a real secret manager (or process env), never in this app's SQLite DB or logs.
+
 1. Create a Salesforce Connected App with OAuth scopes limited to API access needed by the integration user. Use a dedicated, least-privilege integration user and a dedicated permission set.
 2. Record approved objects and fields in a versioned field policy. Do not collect raw PII merely because a field is readable.
 3. Discover permissions and object/field metadata first. Persist field-level-security and queryability outcomes in the scan coverage report.
