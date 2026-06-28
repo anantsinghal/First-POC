@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.container import build_container
+from app.api.routes_audit import router as audit_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_findings import router as findings_router
 from app.api.routes_salesforce import router as salesforce_router
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     app.include_router(findings_router)
     app.include_router(salesforce_router)
     app.include_router(dashboard_router)
+    app.include_router(audit_router)
 
     return app
 

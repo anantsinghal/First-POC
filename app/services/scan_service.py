@@ -9,7 +9,7 @@ from ..domain.enums import CoverageGrade
 from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
-from ..persistence.repositories import CoverageRepository, FindingRepository, ScanRepository
+from ..persistence.repositories import AuditRepository, CoverageRepository, FindingRepository, ScanRepository
 from ..policy.field_policy import FieldPolicy
 from ..profiling.profiler import Profiler
 
@@ -30,6 +30,7 @@ class ScanService:
         coverage_repo: CoverageRepository,
         findings: FindingRepository,
         policy: FieldPolicy,
+        audit: AuditRepository | None = None,
     ) -> None:
         """Store injected dependencies (no defaults; wired in composition root)."""
         self.database = database
@@ -40,6 +41,7 @@ class ScanService:
         self.coverage_repo = coverage_repo
         self.findings = findings
         self.policy = policy
+        self.audit = audit
 
     async def run_scan(self, source: DataSource) -> dict:
         """Execute the scan pipeline. Load first (no DB side effects on failure). Use single UoW for writes."""
@@ -93,6 +95,19 @@ class ScanService:
             if dataset.schema is not None:
                 self.scans.save_schema(
                     conn, scan_id=scan_id, object_name=dataset.object_name, schema=dataset.schema.to_dict()
+                )
+            if self.audit is not None:
+                self.audit.append(
+                    conn,
+                    event="scan_completed",
+                    actor="system",
+                    scan_id=scan_id,
+                    object_name=dataset.object_name,
+                    detail={
+                        "finding_count": len(candidates),
+                        "coverage_grade": coverage.grade.value,
+                        "row_count": len(dataset.records),
+                    },
                 )
         return self.get_scan_detail(scan_id)
 

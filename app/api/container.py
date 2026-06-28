@@ -9,6 +9,7 @@ from ..coverage.grader import CoverageGrader
 from ..detection.registry import build_default_registry
 from ..persistence.database import Database
 from ..persistence.repositories import (
+    AuditRepository,
     CoverageRepository,
     FeedbackRepository,
     FindingRepository,
@@ -16,6 +17,7 @@ from ..persistence.repositories import (
 )
 from ..policy.field_policy import DEFAULT_POLICY
 from ..profiling.profiler import Profiler
+from ..services.audit_service import AuditService
 from ..services.dashboard_service import DashboardService
 from ..services.finding_service import FindingService
 from ..services.scan_service import ScanService
@@ -31,6 +33,7 @@ class Container:
     scan_service: ScanService
     finding_service: FindingService
     dashboard_service: DashboardService
+    audit_service: AuditService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -43,6 +46,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     coverage_repo = CoverageRepository()
     findings = FindingRepository()
     feedback = FeedbackRepository()
+    audit = AuditRepository()
 
     scan_service = ScanService(
         database=database,
@@ -53,11 +57,13 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         coverage_repo=coverage_repo,
         findings=findings,
         policy=DEFAULT_POLICY,
+        audit=audit,
     )
     finding_service = FindingService(
         database=database,
         findings=findings,
         feedback=feedback,
+        audit=audit,
     )
     dashboard_service = DashboardService(
         database=database,
@@ -65,6 +71,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         findings=findings,
         scan_service=scan_service,
     )
+    audit_service = AuditService(database=database, audit=audit)
 
     return Container(
         root=root,
@@ -73,6 +80,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         scan_service=scan_service,
         finding_service=finding_service,
         dashboard_service=dashboard_service,
+        audit_service=audit_service,
     )
 
 

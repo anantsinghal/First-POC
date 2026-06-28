@@ -248,3 +248,32 @@ class FeedbackRepository:
             (finding_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+
+class AuditRepository:
+    """Repository for append-only audit_log. All methods take an open Connection as first arg."""
+
+    def append(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        event: str,
+        actor: str,
+        scan_id: str | None = None,
+        object_name: str | None = None,
+        detail: dict[str, Any],
+    ) -> None:
+        """Append an audit entry. detail must contain only counts/grades/labels (no record values/secrets)."""
+        conn.execute(
+            """INSERT INTO audit_log (id, ts, event, actor, scan_id, object_name, detail_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (str(uuid4()), now(), event, actor, scan_id, object_name, json.dumps(detail)),
+        )
+
+    def list(self, conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+        """Return recent audit entries (newest first), with detail parsed via serialise_row."""
+        rows = conn.execute(
+            "SELECT * FROM audit_log ORDER BY ts DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [serialise_row(row) for row in rows]
