@@ -4,7 +4,7 @@ from ..domain.models import Record, stable_hash
 from ..domain.schema import schema_from_salesforce_describe
 from ..domain.values import clean
 from ..salesforce.client import SalesforceClient
-from ..salesforce.session import SalesforceSession
+from ..salesforce.session import SalesforceError, SalesforceSession
 from .base import DataSource, IngestionError, LoadedDataset
 
 
@@ -34,13 +34,19 @@ class SalesforceObjectSource(DataSource):
         object_name: str,
         max_records: int = 500,
         fields: list[str] | None = None,
+        resolve_references: bool = True,
+        parent_id_probe_limit: int = 2000,
+        id_batch_size: int = 200,
     ) -> None:
-        """Store client/session and params; load() performs describe/query + cleaning."""
+        """Store client/session and params; load() performs describe/query + cleaning + optional live reference resolution for orphans."""
         self.client = client
         self.session = session
         self.object_name = object_name
         self.max_records = max_records
         self.fields = fields
+        self.resolve_references = resolve_references
+        self.parent_id_probe_limit = parent_id_probe_limit
+        self.id_batch_size = id_batch_size
 
     async def load(self) -> LoadedDataset:
         """Describe, filter fields, query, clean records to strings, compute deterministic source_hash via stable_hash."""
@@ -82,6 +88,41 @@ class SalesforceObjectSource(DataSource):
         host = self.session.instance_url.split("//", 1)[-1]
         source_name = f"salesforce:{host}/{self.object_name}"
         source_hash = stable_hash({"fields": fields, "records": cleaned})
+
+        related_ids: dict[str, frozenset[str]] = {}
+        if self.resolve_references:
+            accumulator: dict[str, set[str]] = {}
+            for fd in schema.reference_fields():
+                if fd.name not in fields:
+                    continue
+                if len(fd.reference_to) != 1:
+                    continue
+                target = fd.reference_to[0]
+                if target == self.object_name:
+                    continue
+                referenced = sorted({clean(r.get(fd.name)) for r in cleaned if clean(r.get(fd.name))})
+                if not referenced:
+                    continue
+                if len(referenced) > self.parent_id_probe_limit:
+                    referenced = referenced[:self.parent_id_probe_limit]
+                existing: set[str] = set()
+                target_skipped = False
+                for i in range(0, len(referenced), self.id_batch_size):
+                    batch = referenced[i : i + self.id_batch_size]
+                    inlist = ", ".join("'" + i.replace("'", "") + "'" for i in batch)
+                    try:
+                        rows = await self.client.query_records(
+                            f"SELECT Id FROM {target} WHERE Id IN ({inlist})",
+                            max_records=len(batch),
+                        )
+                    except SalesforceError:
+                        target_skipped = True
+                        break
+                    existing |= {clean(row.get("Id")) for row in rows if clean(row.get("Id"))}
+                if not target_skipped:
+                    accumulator.setdefault(target, set()).update(existing)
+            related_ids = {t: frozenset(ids) for t, ids in accumulator.items()}
+
         return LoadedDataset(
             object_name=self.object_name,
             source_name=source_name,
@@ -89,4 +130,5 @@ class SalesforceObjectSource(DataSource):
             records=cleaned,
             source_hash=source_hash,
             schema=schema,
+            related_ids=related_ids or None,
         )
