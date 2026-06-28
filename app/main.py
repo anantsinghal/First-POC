@@ -12,6 +12,7 @@ from app.api.routes_admin import router as admin_router
 from app.api.routes_audit import router as audit_router
 from app.api.routes_dashboard import router as dashboard_router
 from app.api.routes_findings import router as findings_router
+from app.api.routes_metrics import router as metrics_router
 from app.api.routes_salesforce import router as salesforce_router
 from app.api.routes_scans import router as scans_router
 from app.api.routes_system import router as system_router
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard_router)
     app.include_router(audit_router)
     app.include_router(admin_router)
+    app.include_router(metrics_router)
 
     return app
 

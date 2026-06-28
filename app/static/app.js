@@ -55,8 +55,25 @@ function showAudit(entries) {
   }).join('');
 }
 
-async function refresh() { 
-  const dashboard = await api('/api/dashboard'); 
+function showMetrics(m) {
+  const target = $('#metrics');
+  if (!target) return;
+  if (!m || !m.findings_total) { target.innerHTML = '<p>Run a scan to populate metrics.</p>'; return; }
+  const pct = (x) => x == null ? '—' : `${Math.round(x * 100)}%`;
+  const sev = m.by_severity || {};
+  const chip = (label, val) => `<span class="metric-chip">${label}: <strong>${val}</strong></span>`;
+  target.innerHTML =
+    chip('Findings', m.findings_total) +
+    chip('Open', m.open_findings) +
+    chip('Suppressed', m.suppressed) +
+    chip('Reviewed', m.feedback_total) +
+    chip('Acceptance', pct(m.acceptance_rate)) +
+    chip('False-positive', pct(m.false_positive_rate)) +
+    chip('High', sev.high || 0) + chip('Medium', sev.medium || 0) + chip('Low', sev.low || 0);
+}
+
+async function refresh() {
+  const dashboard = await api('/api/dashboard');
   const scan = dashboard.latest_scan; 
   $('#stats').innerHTML = `<div class="stat"><span>Completed scans</span><strong>${dashboard.total_scans}</strong></div><div class="stat"><span>Open findings</span><strong>${dashboard.open_findings}</strong></div><div class="stat"><span>Latest coverage</span><strong>${scan?.coverage?.grade?.toUpperCase() || '—'}</strong></div>`; 
   coverage(scan); 
@@ -64,6 +81,7 @@ async function refresh() {
   const scans = await api('/api/scans'); 
   $('#scans').innerHTML = scans.length ? scans.map(s => `<div class="scan"><span>${s.object_name} · ${s.source_name}</span><span>${s.row_count} records · ${new Date(s.created_at).toLocaleString()}</span></div>`).join('') : '<p>No scan manifests yet.</p>'; 
   // new panels
+  try { showMetrics(await api('/api/metrics')); } catch (e) { const t = $('#metrics'); if (t) t.innerHTML = ''; }
   showCatalog(scan && scan.schema);
   try {
     const audits = await api('/api/audit?limit=20');

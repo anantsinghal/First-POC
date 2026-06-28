@@ -241,6 +241,21 @@ class FindingRepository:
         """Update status of a finding."""
         conn.execute("UPDATE findings SET status=? WHERE id=?", (status, finding_id))
 
+    def status_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Counts of findings grouped by status."""
+        rows = conn.execute("SELECT status, COUNT(*) FROM findings GROUP BY status").fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def severity_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Counts of findings grouped by severity."""
+        rows = conn.execute("SELECT severity, COUNT(*) FROM findings GROUP BY severity").fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def type_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Counts of findings grouped by finding_type."""
+        rows = conn.execute("SELECT finding_type, COUNT(*) FROM findings GROUP BY finding_type").fetchall()
+        return {row[0]: row[1] for row in rows}
+
 
 class FeedbackRepository:
     """Repository for feedback table."""
@@ -269,6 +284,11 @@ class FeedbackRepository:
             (finding_id,),
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def label_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Counts of feedback grouped by label."""
+        rows = conn.execute("SELECT label, COUNT(*) FROM feedback GROUP BY label").fetchall()
+        return {row[0]: row[1] for row in rows}
 
 
 class AuditRepository:

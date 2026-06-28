@@ -20,6 +20,7 @@ from ..profiling.profiler import Profiler
 from ..services.audit_service import AuditService
 from ..services.dashboard_service import DashboardService
 from ..services.finding_service import FindingService
+from ..services.metrics_service import MetricsService
 from ..services.retention_service import RetentionService
 from ..services.scan_service import ScanService
 
@@ -36,6 +37,7 @@ class Container:
     dashboard_service: DashboardService
     audit_service: AuditService
     retention_service: RetentionService
+    metrics_service: MetricsService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -75,6 +77,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     )
     audit_service = AuditService(database=database, audit=audit)
     retention_service = RetentionService(database=database, scans=scans, audit=audit)
+    metrics_service = MetricsService(database=database, findings=findings, feedback=feedback)
 
     return Container(
         root=root,
@@ -85,6 +88,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         dashboard_service=dashboard_service,
         audit_service=audit_service,
         retention_service=retention_service,
+        metrics_service=metrics_service,
     )
 
 
