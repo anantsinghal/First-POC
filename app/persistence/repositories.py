@@ -147,15 +147,57 @@ class FindingRepository:
         source_hash: str,
         scan_created_at: str,
     ) -> None:
-        """Idempotent upsert: existing -> update (reopen if was resolved); else insert new. severity as .value."""
-        existing = conn.execute(
-            "SELECT id, status FROM findings WHERE fingerprint = ?",
-            (candidate.fingerprint,),
-        ).fetchone()
-        if existing:
-            conn.execute(
-                """UPDATE findings SET scan_id=?, record_name=?, severity=?, confidence=?, priority=?, title=?, evidence_json=?, source_hash=?, last_seen_at=?, status=? WHERE id=?""",
-                (
+        """Idempotent single-candidate upsert (delegates to the batched path for one code path)."""
+        self.upsert_many(
+            conn,
+            scan_id=scan_id,
+            candidates=[candidate],
+            source_hash=source_hash,
+            scan_created_at=scan_created_at,
+        )
+
+    def upsert_many(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        scan_id: str,
+        candidates: list[Candidate],
+        source_hash: str,
+        scan_created_at: str,
+    ) -> None:
+        """Set-based idempotent upsert for many candidates.
+
+        Same semantics as the single upsert (existing fingerprint -> update, reopen if was resolved;
+        else insert; severity stored as .value), but uses one batched existence query + executemany
+        instead of a SELECT+write per candidate — so persisting millions of findings scales.
+        """
+        if not candidates:
+            return
+        # Dedupe by fingerprint within this batch (last occurrence wins, matching the sequential loop).
+        by_fingerprint: dict[str, Candidate] = {}
+        for candidate in candidates:
+            by_fingerprint[candidate.fingerprint] = candidate
+
+        existing: dict[str, tuple[str, str]] = {}
+        fingerprints = list(by_fingerprint.keys())
+        chunk = 900  # stay under SQLite's bound-parameter limit
+        for start in range(0, len(fingerprints), chunk):
+            batch = fingerprints[start : start + chunk]
+            placeholders = ",".join("?" * len(batch))
+            rows = conn.execute(
+                f"SELECT id, fingerprint, status FROM findings WHERE fingerprint IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for row in rows:
+                existing[row["fingerprint"]] = (row["id"], row["status"])
+
+        timestamp = now()
+        updates: list[tuple[Any, ...]] = []
+        inserts: list[tuple[Any, ...]] = []
+        for fingerprint, candidate in by_fingerprint.items():
+            if fingerprint in existing:
+                existing_id, existing_status = existing[fingerprint]
+                updates.append((
                     scan_id,
                     candidate.record_name,
                     candidate.severity.value,
@@ -164,18 +206,14 @@ class FindingRepository:
                     candidate.title,
                     json.dumps(candidate.evidence),
                     source_hash,
-                    now(),
-                    "reopened" if existing["status"] == "resolved" else existing["status"],
-                    existing["id"],
-                ),
-            )
-        else:
-            conn.execute(
-                """INSERT INTO findings (id, fingerprint, scan_id, object_name, record_id, record_name, finding_type, field_name, severity, confidence, priority, status, title, evidence_json, source_hash, created_at, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
+                    timestamp,
+                    "reopened" if existing_status == "resolved" else existing_status,
+                    existing_id,
+                ))
+            else:
+                inserts.append((
                     str(uuid4()),
-                    candidate.fingerprint,
+                    fingerprint,
                     scan_id,
                     candidate.object_name,
                     candidate.record_id,
@@ -191,7 +229,17 @@ class FindingRepository:
                     source_hash,
                     scan_created_at,
                     scan_created_at,
-                ),
+                ))
+        if updates:
+            conn.executemany(
+                """UPDATE findings SET scan_id=?, record_name=?, severity=?, confidence=?, priority=?, title=?, evidence_json=?, source_hash=?, last_seen_at=?, status=? WHERE id=?""",
+                updates,
+            )
+        if inserts:
+            conn.executemany(
+                """INSERT INTO findings (id, fingerprint, scan_id, object_name, record_id, record_name, finding_type, field_name, severity, confidence, priority, status, title, evidence_json, source_hash, created_at, last_seen_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                inserts,
             )
 
     def list(

@@ -80,14 +80,13 @@ class ScanService:
                     related_records=dataset.related_records or {},
                 )
                 candidates = self.registry.detect(ctx)
-            for c in candidates:
-                self.findings.upsert(
-                    conn,
-                    scan_id=scan_id,
-                    candidate=c,
-                    source_hash=dataset.source_hash,
-                    scan_created_at=created,
-                )
+            self.findings.upsert_many(
+                conn,
+                scan_id=scan_id,
+                candidates=candidates,
+                source_hash=dataset.source_hash,
+                scan_created_at=created,
+            )
             self.scans.complete(
                 conn,
                 scan_id=scan_id,
