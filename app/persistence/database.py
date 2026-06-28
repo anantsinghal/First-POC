@@ -23,6 +23,7 @@ def serialise_row(row: sqlite3.Row) -> dict[str, Any]:
         "missing_fields_json",
         "suppressed_checks_json",
         "evidence_json",
+        "schema_json",
     ):
         if key in item and item[key] is not None:
             item[key.removesuffix("_json")] = json.loads(item.pop(key))
@@ -76,6 +77,10 @@ class Database:
             CREATE TABLE IF NOT EXISTS feedback (
               id TEXT PRIMARY KEY, finding_id TEXT NOT NULL REFERENCES findings(id),
               label TEXT NOT NULL, note TEXT, reviewer TEXT NOT NULL, created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS scan_schemas (
+              scan_id TEXT PRIMARY KEY REFERENCES scan_manifests(id), object_name TEXT NOT NULL,
+              schema_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS finding_scan_index ON findings(scan_id);
             CREATE INDEX IF NOT EXISTS finding_status_index ON findings(status);

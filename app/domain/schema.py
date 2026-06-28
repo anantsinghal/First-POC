@@ -59,6 +59,23 @@ class ObjectSchema:
         return [fd for fd in self.fields.values()
                 if fd.data_type in {FieldType.EMAIL, FieldType.PHONE, FieldType.URL}]
 
+    def to_dict(self) -> dict[str, Any]:
+        """Return dict shape that round-trips with schema_from_dict (same fields after reconstruction)."""
+        field_list: list[dict[str, Any]] = []
+        for name in sorted(self.fields.keys()):
+            fd = self.fields[name]
+            field_list.append({
+                "name": fd.name,
+                "data_type": fd.data_type.value,
+                "required": fd.required,
+                "picklist_values": sorted(fd.picklist_values) if fd.picklist_values is not None else None,
+                "reference_to": list(fd.reference_to),
+                "is_name_field": fd.is_name_field,
+                "is_unique": fd.is_unique,
+                "length": fd.length,
+            })
+        return {"object_name": self.object_name, "fields": field_list}
+
 
 def schema_from_salesforce_describe(describe: dict[str, Any]) -> ObjectSchema:
     """Build ObjectSchema from a Salesforce /describe response."""

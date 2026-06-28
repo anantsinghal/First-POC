@@ -69,6 +69,24 @@ class ScanRepository:
         row = conn.execute("SELECT COUNT(*) FROM scan_manifests").fetchone()
         return row[0] if row else 0
 
+    def save_schema(
+        self, conn: sqlite3.Connection, *, scan_id: str, object_name: str, schema: dict[str, Any]
+    ) -> None:
+        """Persist the schema dict (from ObjectSchema.to_dict()) for a scan that supplied metadata."""
+        conn.execute(
+            "INSERT INTO scan_schemas (scan_id, object_name, schema_json) VALUES (?, ?, ?)",
+            (scan_id, object_name, json.dumps(schema)),
+        )
+
+    def get_schema(self, conn: sqlite3.Connection, scan_id: str) -> dict | None:
+        """Return the parsed schema dict for the scan, or None if absent (e.g. CSV scans)."""
+        row = conn.execute(
+            "SELECT schema_json FROM scan_schemas WHERE scan_id=?", (scan_id,)
+        ).fetchone()
+        if row and row["schema_json"]:
+            return json.loads(row["schema_json"])
+        return None
+
 
 class CoverageRepository:
     """Repository for coverage table."""

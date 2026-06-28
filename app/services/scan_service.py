@@ -90,6 +90,10 @@ class ScanService:
                 profile=profile.to_dict(),
                 notes=f"{len(candidates)} candidate occurrences generated.",
             )
+            if dataset.schema is not None:
+                self.scans.save_schema(
+                    conn, scan_id=scan_id, object_name=dataset.object_name, schema=dataset.schema.to_dict()
+                )
         return self.get_scan_detail(scan_id)
 
     def get_scan_detail(self, scan_id: str) -> dict:
@@ -100,8 +104,10 @@ class ScanService:
                 raise NotFoundError("Scan not found")
             cov = self.coverage_repo.get(conn, scan_id)
             count = self.findings.count_for_scan(conn, scan_id)
+            schema = self.scans.get_schema(conn, scan_id)
         manifest["coverage"] = cov
         manifest["finding_count"] = count
+        manifest["schema"] = schema
         return manifest
 
     def list_scans(self) -> list[dict]:
