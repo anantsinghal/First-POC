@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from ..domain.models import CheckRequirement
 from .base import Candidate, DetectionContext, Detector
+from .reconcile import reconcile
 from .ml.isolation_forest import IsolationForestDetector
 from .patterns.association import AssociationPatternDetector
 from .rules.duplicates import DuplicateNameDetector
@@ -39,11 +40,11 @@ class DetectorRegistry:
         return tuple(self._detectors)
 
     def detect(self, ctx: DetectionContext) -> list[Candidate]:
-        """Run all detectors in order and concatenate their Candidate lists."""
+        """Run all detectors, concatenate, then reconcile duplicate/equivalent findings."""
         results: list[Candidate] = []
         for det in self._detectors:
             results.extend(det.detect(ctx))
-        return results
+        return reconcile(results)
 
     def requirements(self) -> list[CheckRequirement]:
         """Return declared requirements for detectors that have them (in registration order).
