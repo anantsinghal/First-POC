@@ -60,7 +60,10 @@ class ScanService:
                 source_hash=dataset.source_hash,
                 fields=dataset.fields,
             )
-            coverage = self.grader.grade(dataset.object_name, dataset.records, dataset.fields)
+            coverage = self.grader.grade(
+                dataset.object_name, dataset.records, dataset.fields,
+                sampled=getattr(dataset, "truncated", False),
+            )
             self.coverage_repo.insert(conn, scan_id, coverage)
             profile = self.profiler.profile(dataset.records, dataset.fields)
             if coverage.grade == CoverageGrade.BLOCKED:

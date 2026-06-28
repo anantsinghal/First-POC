@@ -21,6 +21,7 @@ class LoadedDataset:
     schema: "ObjectSchema | None" = None
     related_ids: dict[str, frozenset[str]] | None = None
     related_records: dict[str, list[Record]] | None = None
+    truncated: bool = False  # True when only a prefix of records was loaded (record cap hit on a large object)
 
 
 class IngestionError(RuntimeError):

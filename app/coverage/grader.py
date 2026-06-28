@@ -18,8 +18,20 @@ class CoverageGrader:
         self.policy = policy
         self.requirements = tuple(requirements)
 
-    def grade(self, object_name: str, records: list[Record], fields: list[str]) -> Coverage:
-        """Return Coverage value object; logic mirrors baseline calculate_coverage but via policy."""
+    def grade(
+        self,
+        object_name: str,
+        records: list[Record],
+        fields: list[str],
+        *,
+        sampled: bool = False,
+    ) -> Coverage:
+        """Return Coverage value object; logic mirrors baseline calculate_coverage but via policy.
+
+        ``sampled=True`` means only a prefix of the object's records was scanned (e.g. a record cap
+        was hit on a large object). Such a scan is NEVER reported as complete/GOOD — it is downgraded
+        to PARTIAL and annotated, so coverage can never overstate what was actually examined.
+        """
         expected = self.policy.expected_fields(object_name)
         missing = sorted(expected - set(fields))
         field_set = set(fields)
@@ -38,6 +50,14 @@ class CoverageGrader:
             grade, reason = CoverageGrade.PARTIAL, "Some expected fields are unavailable; dependent checks were suppressed."
         else:
             grade, reason = CoverageGrade.GOOD, "Selected POC fields were present in the supplied file."
+        if sampled and grade != CoverageGrade.BLOCKED:
+            # A capped/sampled scan only saw a prefix of the object — never claim completeness.
+            grade = CoverageGrade.PARTIAL
+            reason = (
+                f"Sampled scan: only the first {len(records)} records were examined (record cap reached); "
+                f"findings are over that sample and coverage is NOT org-complete. " + reason
+            )
+            suppressed.append("org-complete coverage: record cap reached (sampled scan)")
         return Coverage(
             object_name=object_name,
             observed_records=len(records),

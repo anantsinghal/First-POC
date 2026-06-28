@@ -131,4 +131,6 @@ class SalesforceObjectSource(DataSource):
             source_hash=source_hash,
             schema=schema,
             related_ids=related_ids or None,
+            # If we filled exactly to the cap, the object likely has more records than we scanned.
+            truncated=len(cleaned) >= self.max_records,
         )
