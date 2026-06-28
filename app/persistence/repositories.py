@@ -87,6 +87,27 @@ class ScanRepository:
             return json.loads(row["schema_json"])
         return None
 
+    def ids_older_than(self, conn: sqlite3.Connection, cutoff_iso: str) -> list[str]:
+        """Return list of scan ids where created_at < cutoff_iso (for purge selection)."""
+        rows = conn.execute(
+            "SELECT id FROM scan_manifests WHERE created_at < ?",
+            (cutoff_iso,),
+        ).fetchall()
+        return [row["id"] for row in rows]
+
+    def purge_scan(self, conn: sqlite3.Connection, scan_id: str) -> None:
+        """Delete all per-scan data for a scan (feedback, findings, coverage, schemas, manifest).
+        audit_log is intentionally left untouched.
+        """
+        conn.execute(
+            "DELETE FROM feedback WHERE finding_id IN (SELECT id FROM findings WHERE scan_id=?)",
+            (scan_id,),
+        )
+        conn.execute("DELETE FROM findings WHERE scan_id=?", (scan_id,))
+        conn.execute("DELETE FROM coverage WHERE scan_id=?", (scan_id,))
+        conn.execute("DELETE FROM scan_schemas WHERE scan_id=?", (scan_id,))
+        conn.execute("DELETE FROM scan_manifests WHERE id=?", (scan_id,))
+
 
 class CoverageRepository:
     """Repository for coverage table."""
