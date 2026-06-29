@@ -38,6 +38,11 @@ class ScanPlanner:
     tier1_max_records: int = 2_000_000
     pattern_max_records: int = 500_000
     ml_max_records: int = 200_000
+    columnar_profile_min_records: int = 100_000
+
+    def use_columnar_profile(self, estimated_records: int) -> bool:
+        """Whether to profile this object out-of-core (Parquet+DuckDB) rather than in memory."""
+        return estimated_records >= self.columnar_profile_min_records
 
     def plan(self, object_name: str, estimated_records: int) -> ScanPlan:
         """Return the planned detector set and readable deferral reasons."""

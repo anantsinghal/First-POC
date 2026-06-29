@@ -68,7 +68,7 @@ class ScanService:
                 sampled=getattr(dataset, "truncated", False),
             )
             self.coverage_repo.insert(conn, scan_id, coverage)
-            profile = self.profiler.profile(dataset.records, dataset.fields)
+            profile = self._profile(dataset)
             if coverage.grade == CoverageGrade.BLOCKED:
                 candidates = []
                 plan = None
@@ -132,6 +132,50 @@ class ScanService:
                     },
                 )
         return self.get_scan_detail(scan_id)
+
+    def _profile(self, dataset):
+        """Profile the dataset, out-of-core (Parquet+DuckDB) for large objects per the planner.
+
+        For large objects the records are staged to an EPHEMERAL Parquet file, profiled via DuckDB
+        (bounded memory), then the staged file is purged. Falls back to the in-memory profiler when the
+        object is small or the optional scale deps (duckdb/pyarrow) are unavailable. The Profile shape
+        is identical either way (verified parity), so downstream behaviour is unchanged.
+        """
+        records, fields = dataset.records, dataset.fields
+        if self._columnar_available() and self.planner.use_columnar_profile(len(records)):
+            import os
+            import tempfile
+
+            from ..profiling.columnar_profiler import ColumnarProfiler
+            from ..staging.parquet_store import write_records
+
+            staging_dir = tempfile.mkdtemp(prefix="scan_stage_")
+            path = os.path.join(staging_dir, "records.parquet")
+            try:
+                write_records(path, records, fields)
+                return ColumnarProfiler().profile(path, fields)
+            finally:
+                # Ephemeral staging: purge the raw columnar data immediately after profiling.
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                try:
+                    os.rmdir(staging_dir)
+                except OSError:
+                    pass
+        return self.profiler.profile(records, fields)
+
+    @staticmethod
+    def _columnar_available() -> bool:
+        """True when both optional scale deps (pyarrow staging + duckdb profiler) are importable."""
+        try:
+            from ..profiling.columnar_profiler import ColumnarProfiler
+            from ..staging.parquet_store import is_available as pyarrow_available
+
+            return pyarrow_available() and ColumnarProfiler().is_available()
+        except Exception:
+            return False
 
     def get_scan_detail(self, scan_id: str) -> dict:
         """Return manifest + coverage + finding_count (raises NotFoundError if missing). Matches old scan_detail shape."""
