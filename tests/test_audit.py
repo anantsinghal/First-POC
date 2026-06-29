@@ -60,7 +60,15 @@ def test_audit_via_demo_scan_and_feedback(tmp_path: Path, monkeypatch):
         detail = scan_audits[0]["detail"]
         assert detail["finding_count"] == 10
         assert detail["coverage_grade"] == "good"
-        assert set(detail.keys()) == {"finding_count", "coverage_grade", "row_count"}
+        assert detail["deferred_detectors"] == []
+        assert detail["planned_detectors"] > 0
+        assert set(detail.keys()) == {
+            "finding_count",
+            "coverage_grade",
+            "row_count",
+            "deferred_detectors",
+            "planned_detectors",
+        }
         # sanity: no secrets in values
         assert "token" not in str(detail).lower() and "secret" not in str(detail).lower()
 

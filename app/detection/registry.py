@@ -39,10 +39,19 @@ class DetectorRegistry:
         """Read-only tuple of registered detectors (in order)."""
         return tuple(self._detectors)
 
-    def detect(self, ctx: DetectionContext) -> list[Candidate]:
-        """Run all detectors, concatenate, then reconcile duplicate/equivalent findings."""
+    def detect(
+        self,
+        ctx: DetectionContext,
+        *,
+        include: set[str] | frozenset[str] | None = None,
+    ) -> list[Candidate]:
+        """Run detectors, optionally filtering by detector id, then reconcile findings."""
         results: list[Candidate] = []
         for det in self._detectors:
+            if include is not None:
+                detector_id = getattr(det, "id", None)
+                if detector_id is not None and detector_id not in include:
+                    continue
             results.extend(det.detect(ctx))
         return reconcile(results)
 

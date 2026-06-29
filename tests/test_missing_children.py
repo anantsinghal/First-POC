@@ -13,6 +13,7 @@ from app.domain.values import clean
 from app.ingestion.base import DataSource, LoadedDataset
 from app.persistence.database import Database
 from app.persistence.repositories import CoverageRepository, FindingRepository, ScanRepository
+from app.planning.planner import ScanPlanner
 from app.policy.field_policy import DEFAULT_POLICY
 from app.profiling.profiler import Profiler
 from app.services.scan_service import ScanService
@@ -105,6 +106,7 @@ def test_scan_service_wiring_with_related_records(tmp_path: Path):
         profiler=Profiler(),
         grader=CoverageGrader(DEFAULT_POLICY),
         registry=build_default_registry(),
+        planner=ScanPlanner(),
         scans=ScanRepository(),
         coverage_repo=CoverageRepository(),
         findings=findings,

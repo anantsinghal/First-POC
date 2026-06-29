@@ -10,6 +10,7 @@ from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
 from ..persistence.repositories import AuditRepository, CoverageRepository, FindingRepository, ScanRepository
+from ..planning.planner import ScanPlanner
 from ..policy.field_policy import FieldPolicy
 from ..profiling.profiler import Profiler
 
@@ -26,6 +27,7 @@ class ScanService:
         profiler: Profiler,
         grader: CoverageGrader,
         registry: DetectorRegistry,
+        planner: ScanPlanner,
         scans: ScanRepository,
         coverage_repo: CoverageRepository,
         findings: FindingRepository,
@@ -37,6 +39,7 @@ class ScanService:
         self.profiler = profiler
         self.grader = grader
         self.registry = registry
+        self.planner = planner
         self.scans = scans
         self.coverage_repo = coverage_repo
         self.findings = findings
@@ -68,6 +71,7 @@ class ScanService:
             profile = self.profiler.profile(dataset.records, dataset.fields)
             if coverage.grade == CoverageGrade.BLOCKED:
                 candidates = []
+                plan = None
             else:
                 related_ids = dataset.related_ids or {
                     obj: frozenset(clean(r.get("Id")) for r in recs if clean(r.get("Id")))
@@ -79,7 +83,9 @@ class ScanService:
                     related_ids=related_ids,
                     related_records=dataset.related_records or {},
                 )
-                candidates = self.registry.detect(ctx)
+                # The row count is the current estimate; production will supply a pre-extraction count.
+                plan = self.planner.plan(dataset.object_name, len(dataset.records))
+                candidates = self.registry.detect(ctx, include=plan.included_ids)
             self.findings.upsert_many(
                 conn,
                 scan_id=scan_id,
@@ -92,7 +98,11 @@ class ScanService:
                 scan_id=scan_id,
                 completed_at=now(),
                 profile=profile.to_dict(),
-                notes=f"{len(candidates)} candidate occurrences generated.",
+                notes=(
+                    f"{len(candidates)} candidate occurrences generated."
+                    if plan is None
+                    else f"{len(candidates)} candidate occurrences generated. {plan.notes}"
+                ),
             )
             if dataset.schema is not None:
                 self.scans.save_schema(
@@ -109,6 +119,8 @@ class ScanService:
                         "finding_count": len(candidates),
                         "coverage_grade": coverage.grade.value,
                         "row_count": len(dataset.records),
+                        "deferred_detectors": [] if plan is None else [detector_id for detector_id, _ in plan.skipped],
+                        "planned_detectors": 0 if plan is None else len(plan.included_ids),
                     },
                 )
         return self.get_scan_detail(scan_id)

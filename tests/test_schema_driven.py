@@ -30,6 +30,7 @@ from app.persistence.repositories import (
     FindingRepository,
     ScanRepository,
 )
+from app.planning.planner import ScanPlanner
 from app.profiling.profiler import Profiler
 from app.coverage.grader import CoverageGrader
 
@@ -197,6 +198,7 @@ def test_scan_service_wiring_with_schema(tmp_path: Path):
         profiler=profiler,
         grader=grader,
         registry=registry,
+        planner=ScanPlanner(),
         scans=scans,
         coverage_repo=coverage_repo,
         findings=findings,

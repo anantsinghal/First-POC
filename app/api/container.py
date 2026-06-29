@@ -15,6 +15,7 @@ from ..persistence.repositories import (
     FindingRepository,
     ScanRepository,
 )
+from ..planning.planner import ScanPlanner
 from ..policy.field_policy import DEFAULT_POLICY
 from ..profiling.profiler import Profiler
 from ..services.audit_service import AuditService
@@ -45,6 +46,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     database = Database(data_dir / "scanner.db")
     profiler = Profiler()
     registry = build_default_registry()
+    planner = ScanPlanner()
     grader = CoverageGrader(DEFAULT_POLICY, requirements=registry.requirements())
     scans = ScanRepository()
     coverage_repo = CoverageRepository()
@@ -57,6 +59,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         profiler=profiler,
         grader=grader,
         registry=registry,
+        planner=planner,
         scans=scans,
         coverage_repo=coverage_repo,
         findings=findings,

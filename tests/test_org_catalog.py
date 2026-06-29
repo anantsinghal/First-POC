@@ -11,6 +11,7 @@ from app.domain.schema import ObjectSchema, schema_from_dict
 from app.ingestion.base import DataSource, LoadedDataset
 from app.persistence.database import Database
 from app.persistence.repositories import CoverageRepository, FindingRepository, ScanRepository
+from app.planning.planner import ScanPlanner
 from app.policy.field_policy import DEFAULT_POLICY
 from app.profiling.profiler import Profiler
 from app.services.scan_service import ScanService
@@ -169,6 +170,7 @@ def test_scan_service_wires_schema_persistence_and_none_for_csv(tmp_path: Path):
         profiler=profiler,
         grader=grader,
         registry=registry,
+        planner=ScanPlanner(),
         scans=scans,
         coverage_repo=coverage_repo,
         findings=findings,
