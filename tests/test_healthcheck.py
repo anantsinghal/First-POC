@@ -122,6 +122,10 @@ def test_system_healthcheck(tmp_path: Path):
         scan = r.json()
         assert scan.get("finding_count") == 10
 
+        r = client.get(f"/api/scans/{scan['id']}/quality")
+        assert r.status_code == 200
+        assert isinstance(r.json().get("quality_score"), (int, float))
+
         # findings
         r = client.get(f"/api/findings?scan_id={scan['id']}")
         assert r.status_code == 200

@@ -72,11 +72,29 @@ function showMetrics(m) {
     chip('High', sev.high || 0) + chip('Medium', sev.medium || 0) + chip('Low', sev.low || 0);
 }
 
+function showQuality(quality) {
+  const target = $('#quality');
+  if (!target) return;
+  if (!quality) {
+    target.innerHTML = '<p>Run a scan to populate.</p>';
+    return;
+  }
+  const score = quality.quality_score == null ? '—' : `${quality.quality_score}%`;
+  const grade = quality.coverage_grade ? quality.coverage_grade.toUpperCase() : '—';
+  const sampled = quality.sampled ? ' (sampled)' : '';
+  let trend = '—';
+  if (typeof quality.quality_delta === 'number') {
+    trend = quality.quality_delta > 0 ? '▲' : quality.quality_delta < 0 ? '▼' : '—';
+  }
+  target.innerHTML = `<div class="quality-score">Quality: ${score} ${trend}</div><p class="quality-meta">Coverage: ${grade}${sampled}</p>`;
+}
+
 async function refresh() {
   const dashboard = await api('/api/dashboard');
   const scan = dashboard.latest_scan; 
   $('#stats').innerHTML = `<div class="stat"><span>Completed scans</span><strong>${dashboard.total_scans}</strong></div><div class="stat"><span>Open findings</span><strong>${dashboard.open_findings}</strong></div><div class="stat"><span>Latest coverage</span><strong>${scan?.coverage?.grade?.toUpperCase() || '—'}</strong></div>`; 
   coverage(scan); 
+  try { showQuality(scan ? await api(`/api/scans/${scan.id}/quality`) : null); } catch (e) { showQuality(null); }
   showFindings(scan ? await api(`/api/findings?scan_id=${scan.id}`) : []); 
   const scans = await api('/api/scans'); 
   $('#scans').innerHTML = scans.length ? scans.map(s => `<div class="scan"><span>${s.object_name} · ${s.source_name}</span><span>${s.row_count} records · ${new Date(s.created_at).toLocaleString()}</span></div>`).join('') : '<p>No scan manifests yet.</p>'; 

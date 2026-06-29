@@ -6,4 +6,6 @@
 .metrics-chips { display:flex; flex-wrap:wrap; gap:8px; }
 .metric-chip { font-size:.78rem; color:var(--muted); background:#101c31; border:1px solid var(--line); padding:5px 10px; border-radius:999px; }
 .metric-chip strong { color:var(--ink); }
+.quality-score { font-size:2rem; font-weight:800; letter-spacing:-.04em; }
+.quality-meta { color:var(--muted); margin:.35rem 0 0; }
 @media (max-width:620px) { header{align-items:start;flex-direction:column}.stats{grid-template-columns:1fr}.scan{flex-direction:column;gap:3px} }

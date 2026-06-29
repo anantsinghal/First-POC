@@ -111,3 +111,12 @@ def get_scan(scan_id: str, container: Container = Depends(get_container)) -> dic
         return container.scan_service.get_scan_detail(scan_id)
     except NotFoundError as e:
         raise HTTPException(404, str(e)) from e
+
+
+@router.get("/api/scans/{scan_id}/quality")
+def get_scan_quality(scan_id: str, container: Container = Depends(get_container)) -> dict[str, Any]:
+    """Return data quality metrics for a scan."""
+    try:
+        return container.quality_service.for_scan(scan_id)
+    except NotFoundError as e:
+        raise HTTPException(404, str(e)) from e

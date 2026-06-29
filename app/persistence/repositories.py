@@ -64,6 +64,19 @@ class ScanRepository:
         row = conn.execute("SELECT id FROM scan_manifests ORDER BY created_at DESC, rowid DESC LIMIT 1").fetchone()
         return row["id"] if row else None
 
+    def previous_scan_id(
+        self, conn: sqlite3.Connection, object_name: str, before_created_at: str
+    ) -> str | None:
+        """Return the most recent completed scan id for the same object before the timestamp."""
+        row = conn.execute(
+            """SELECT id FROM scan_manifests
+               WHERE object_name=? AND created_at<? AND status='completed'
+               ORDER BY created_at DESC, rowid DESC
+               LIMIT 1""",
+            (object_name, before_created_at),
+        ).fetchone()
+        return row["id"] if row else None
+
     def count(self, conn: sqlite3.Connection) -> int:
         """Total number of scans."""
         row = conn.execute("SELECT COUNT(*) FROM scan_manifests").fetchone()
@@ -87,6 +100,22 @@ class ScanRepository:
             return json.loads(row["schema_json"])
         return None
 
+    def save_quality(
+        self, conn: sqlite3.Connection, *, scan_id: str, observed_records: int, flagged_records: int
+    ) -> None:
+        """Snapshot the scan's observed + distinct-flagged record counts at completion (stable trend basis)."""
+        conn.execute(
+            "INSERT OR REPLACE INTO scan_quality (scan_id, observed_records, flagged_records) VALUES (?, ?, ?)",
+            (scan_id, observed_records, flagged_records),
+        )
+
+    def get_quality(self, conn: sqlite3.Connection, scan_id: str) -> dict[str, int] | None:
+        """Return the {observed_records, flagged_records} snapshot for a scan, or None."""
+        row = conn.execute(
+            "SELECT observed_records, flagged_records FROM scan_quality WHERE scan_id=?", (scan_id,)
+        ).fetchone()
+        return {"observed_records": row[0], "flagged_records": row[1]} if row else None
+
     def ids_older_than(self, conn: sqlite3.Connection, cutoff_iso: str) -> list[str]:
         """Return list of scan ids where created_at < cutoff_iso (for purge selection)."""
         rows = conn.execute(
@@ -106,6 +135,7 @@ class ScanRepository:
         conn.execute("DELETE FROM findings WHERE scan_id=?", (scan_id,))
         conn.execute("DELETE FROM coverage WHERE scan_id=?", (scan_id,))
         conn.execute("DELETE FROM scan_schemas WHERE scan_id=?", (scan_id,))
+        conn.execute("DELETE FROM scan_quality WHERE scan_id=?", (scan_id,))
         conn.execute("DELETE FROM scan_manifests WHERE id=?", (scan_id,))
 
 
@@ -280,6 +310,14 @@ class FindingRepository:
         row = conn.execute("SELECT COUNT(*) FROM findings WHERE scan_id=?", (scan_id,)).fetchone()
         return row[0] if row else 0
 
+    def distinct_record_count(self, conn: sqlite3.Connection, scan_id: str) -> int:
+        """Count distinct records with findings for a scan."""
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT record_id) FROM findings WHERE scan_id=?",
+            (scan_id,),
+        ).fetchone()
+        return row[0] if row else 0
+
     def count_open(self, conn: sqlite3.Connection) -> int:
         """Open or reopened findings count."""
         row = conn.execute("SELECT COUNT(*) FROM findings WHERE status IN ('open','reopened')").fetchone()
@@ -294,9 +332,17 @@ class FindingRepository:
         rows = conn.execute("SELECT status, COUNT(*) FROM findings GROUP BY status").fetchall()
         return {row[0]: row[1] for row in rows}
 
-    def severity_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
-        """Counts of findings grouped by severity."""
-        rows = conn.execute("SELECT severity, COUNT(*) FROM findings GROUP BY severity").fetchall()
+    def severity_counts(
+        self, conn: sqlite3.Connection, *, scan_id: str | None = None
+    ) -> dict[str, int]:
+        """Counts of findings grouped by severity, optionally scoped to one scan."""
+        if scan_id is None:
+            rows = conn.execute("SELECT severity, COUNT(*) FROM findings GROUP BY severity").fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT severity, COUNT(*) FROM findings WHERE scan_id=? GROUP BY severity",
+                (scan_id,),
+            ).fetchall()
         return {row[0]: row[1] for row in rows}
 
     def type_counts(self, conn: sqlite3.Connection) -> dict[str, int]:

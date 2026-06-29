@@ -87,6 +87,10 @@ class Database:
               id TEXT PRIMARY KEY, ts TEXT NOT NULL, event TEXT NOT NULL, actor TEXT NOT NULL,
               scan_id TEXT, object_name TEXT, detail_json TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS scan_quality (
+              scan_id TEXT PRIMARY KEY REFERENCES scan_manifests(id),
+              observed_records INTEGER NOT NULL, flagged_records INTEGER NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS finding_scan_index ON findings(scan_id);
             CREATE INDEX IF NOT EXISTS finding_status_index ON findings(status);
             """)

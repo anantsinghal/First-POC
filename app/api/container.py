@@ -22,6 +22,7 @@ from ..services.audit_service import AuditService
 from ..services.dashboard_service import DashboardService
 from ..services.finding_service import FindingService
 from ..services.metrics_service import MetricsService
+from ..services.quality_service import QualityService
 from ..services.retention_service import RetentionService
 from ..services.scan_service import ScanService
 
@@ -39,6 +40,7 @@ class Container:
     audit_service: AuditService
     retention_service: RetentionService
     metrics_service: MetricsService
+    quality_service: QualityService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -81,6 +83,12 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     audit_service = AuditService(database=database, audit=audit)
     retention_service = RetentionService(database=database, scans=scans, audit=audit)
     metrics_service = MetricsService(database=database, findings=findings, feedback=feedback)
+    quality_service = QualityService(
+        database=database,
+        scans=scans,
+        coverage_repo=coverage_repo,
+        findings=findings,
+    )
 
     return Container(
         root=root,
@@ -92,6 +100,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         audit_service=audit_service,
         retention_service=retention_service,
         metrics_service=metrics_service,
+        quality_service=quality_service,
     )
 
 

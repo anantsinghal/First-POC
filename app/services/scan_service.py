@@ -104,6 +104,14 @@ class ScanService:
                     else f"{len(candidates)} candidate occurrences generated. {plan.notes}"
                 ),
             )
+            # Snapshot quality counts at completion so trend is stable even after findings'
+            # scan_id migrates to later scans on re-detection.
+            self.scans.save_quality(
+                conn,
+                scan_id=scan_id,
+                observed_records=coverage.observed_records,
+                flagged_records=len({c.record_id for c in candidates if c.record_id}),
+            )
             if dataset.schema is not None:
                 self.scans.save_schema(
                     conn, scan_id=scan_id, object_name=dataset.object_name, schema=dataset.schema.to_dict()
