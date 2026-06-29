@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+from collections.abc import Iterator
 
 from ..domain.models import Record
 from ..domain.values import clean
@@ -31,6 +32,27 @@ class CsvSource(DataSource):
         self.raw_bytes = raw_bytes
         self.object_name = object_name
         self.source_name = source_name
+
+    def iter_batches(self, batch_size: int = 10_000) -> Iterator[list[Record]]:
+        """Stream cleaned records in batches via a lazy DictReader (no full record list built).
+
+        First yields nothing materialised beyond one batch at a time. ``self.fieldnames`` is set after
+        the first batch so a caller knows the columns. Raises IngestionError on decode/csv errors.
+        """
+        try:
+            text = self.raw_bytes.decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(text))
+            self.fieldnames = reader.fieldnames or []
+            batch: list[Record] = []
+            for row in reader:
+                batch.append({k: clean(v) for k, v in row.items() if k is not None})
+                if len(batch) >= batch_size:
+                    yield batch
+                    batch = []
+            if batch:
+                yield batch
+        except (UnicodeDecodeError, csv.Error) as exc:
+            raise IngestionError(f"Could not parse CSV: {exc}", status_code=400) from exc
 
     async def load(self) -> LoadedDataset:
         """Parse CSV exactly as baseline, using clean; raise IngestionError on decode/csv errors."""

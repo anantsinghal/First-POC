@@ -166,6 +166,91 @@ class ScanService:
                     pass
         return self.profiler.profile(records, fields)
 
+    async def profile_source(self, source: DataSource) -> dict:
+        """Bounded-memory PROFILE-ONLY scan for large objects: stream -> Parquet -> columnar profile.
+
+        Streams the source's batches straight into an ephemeral Parquet file (records never fully
+        materialised), profiles out-of-core via DuckDB, and persists manifest + coverage + profile +
+        quality (NO findings — detection is a separate pass). Falls back to load() + in-memory profile
+        when the source can't stream or the scale deps are absent.
+        """
+        from ..domain.models import stable_hash
+
+        self.database.setup()
+        object_name = getattr(source, "object_name", "Unknown")
+        source_name = getattr(source, "source_name", "stream-profile")
+        scan_id = str(uuid4())
+        created = now()
+
+        if hasattr(source, "iter_batches") and self._columnar_available():
+            import os
+            import tempfile
+
+            from ..profiling.columnar_profiler import ColumnarProfiler
+            from ..staging.parquet_store import write_record_batches
+
+            staging_dir = tempfile.mkdtemp(prefix="scan_profile_")
+            path = os.path.join(staging_dir, "records.parquet")
+            try:
+                generator = source.iter_batches()
+                first_batch = next(generator, None)
+                columns = list(first_batch[0].keys()) if first_batch else list(
+                    getattr(source, "fieldnames", []) or []
+                )
+
+                def all_batches():
+                    if first_batch:
+                        yield first_batch
+                    yield from generator
+
+                total = write_record_batches(path, all_batches(), columns) if columns else 0
+                profile = (
+                    ColumnarProfiler().profile(path, columns)
+                    if total
+                    else self.profiler.profile([], columns)
+                )
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                try:
+                    os.rmdir(staging_dir)
+                except OSError:
+                    pass
+            source_hash = stable_hash({"object": object_name, "fields": columns, "count": total, "mode": "stream-profile"})
+            fields = columns
+            mode = "stream-profile"
+        else:
+            dataset = await source.load()
+            fields = dataset.fields
+            total = len(dataset.records)
+            profile = self._profile(dataset)
+            source_hash = dataset.source_hash
+            object_name = dataset.object_name
+            source_name = dataset.source_name
+            mode = "profile"
+
+        coverage = self.grader.grade(object_name, [], fields, record_count=total)
+        with self.database.connect() as conn:
+            self.scans.insert_running(
+                conn, scan_id=scan_id, source_name=source_name, object_name=object_name,
+                created_at=created, row_count=total, source_hash=source_hash, fields=fields,
+            )
+            self.coverage_repo.insert(conn, scan_id, coverage)
+            self.scans.complete(
+                conn, scan_id=scan_id, completed_at=now(),
+                profile=profile.to_dict(), notes=f"profile-only scan ({mode}); detection not run.",
+            )
+            self.scans.save_quality(conn, scan_id=scan_id, observed_records=total, flagged_records=0)
+            if self.audit is not None:
+                self.audit.append(
+                    conn, event="scan_profiled", actor="system", scan_id=scan_id,
+                    object_name=object_name,
+                    detail={"row_count": total, "coverage_grade": coverage.grade.value, "mode": mode},
+                )
+        return self.get_scan_detail(scan_id)
+
     @staticmethod
     def _columnar_available() -> bool:
         """True when both optional scale deps (pyarrow staging + duckdb profiler) are importable."""

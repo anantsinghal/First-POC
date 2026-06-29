@@ -50,6 +50,27 @@ async def upload_scan(
         raise HTTPException(e.status_code, str(e)) from e
 
 
+@router.post("/api/scans/profile")
+async def profile_scan(
+    object_name: str = Query(min_length=1, max_length=80),
+    file: UploadFile = File(...),
+    container: Container = Depends(get_container),
+) -> dict[str, Any]:
+    """Bounded-memory PROFILE-ONLY scan (no detection): streams the CSV -> Parquet -> DuckDB profile."""
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise HTTPException(400, "Upload a CSV file")
+    raw = await file.read()
+    if len(raw) > 25_000_000:
+        raise HTTPException(413, "POC upload limit is 25 MB")
+    source = CsvSource(
+        raw_bytes=raw, object_name=object_name, source_name=file.filename or "upload.csv"
+    )
+    try:
+        return await container.scan_service.profile_source(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+
+
 @router.post("/api/scans/multi")
 async def multi_scan(
     primary_object: str = Query(min_length=1, max_length=80),
