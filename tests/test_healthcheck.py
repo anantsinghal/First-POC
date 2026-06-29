@@ -140,3 +140,40 @@ def test_system_healthcheck(tmp_path: Path):
         assert r.status_code == 200
         events = [a.get("event") for a in r.json()]
         assert "scan_completed" in events
+
+        # metrics (trust loop)
+        r = client.get("/api/metrics")
+        assert r.status_code == 200
+        metrics = r.json()
+        assert metrics.get("findings_total", 0) >= 10
+        assert "acceptance_rate" in metrics and "false_positive_rate" in metrics
+
+        # multi-object scan via API (relationship layer): 3 childless accounts flagged
+        accounts = harness.csv_bytes(["Id", "Name"], [[f"acc{i:03d}", f"A{i}"] for i in range(20)])
+        contacts = harness.csv_bytes(["Id", "AccountId"], [[f"con{i:03d}", f"acc{i:03d}"] for i in range(17)])
+        r = client.post(
+            "/api/scans/multi?primary_object=Account",
+            files=[("files", ("Account.csv", accounts, "text/csv")),
+                   ("files", ("Contact.csv", contacts, "text/csv"))],
+        )
+        assert r.status_code == 200, r.text
+        multi_findings = client.get(f"/api/findings?scan_id={r.json()['id']}").json()
+        assert sum(1 for f in multi_findings if f["finding_type"] == "missing_children") == 3
+
+        # bounded-memory profile-only scan (no detection)
+        big = harness.csv_bytes(
+            ["Id", "Segment", "Amount"],
+            [[f"00Q{i:04d}", "Enterprise" if i % 2 == 0 else "SMB", str(1000 + i)] for i in range(50)],
+        )
+        r = client.post("/api/scans/profile?object_name=Account",
+                        files=[("file", ("accounts.csv", big, "text/csv"))])
+        assert r.status_code == 200, r.text
+        prof_scan = r.json()
+        assert prof_scan["finding_count"] == 0
+        assert prof_scan["profile"]["record_count"] == 50
+
+        # retention/purge: validation + a no-op recent purge
+        assert client.post("/api/admin/purge", json={"older_than_days": 0}).status_code == 422
+        r = client.post("/api/admin/purge", json={"older_than_days": 1})
+        assert r.status_code == 200
+        assert "purged_scans" in r.json()
