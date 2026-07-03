@@ -13,7 +13,8 @@ candidates, not verdicts. Nothing is auto-written back to Salesforce.
 > The full long-term product blueprint lives in [`docs/blueprint/`](docs/blueprint/README.md); the
 > north-star and current gap map are in [`docs/north-star.md`](docs/north-star.md) and
 > [`docs/poc-vs-blueprint.md`](docs/poc-vs-blueprint.md); scale posture in
-> [`docs/scalability.md`](docs/scalability.md).
+> [`docs/scalability.md`](docs/scalability.md); the **universal (any-database) platform vision** in
+> [`docs/universal-strategy.md`](docs/universal-strategy.md).
 
 ## What it does
 
