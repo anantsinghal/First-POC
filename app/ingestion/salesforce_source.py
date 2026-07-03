@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..domain.models import Record, stable_hash
-from ..domain.schema import schema_from_salesforce_describe
+from .salesforce_schema import schema_from_salesforce_describe
 from ..domain.values import clean
 from ..salesforce.client import SalesforceClient
 from ..salesforce.session import SalesforceError, SalesforceSession

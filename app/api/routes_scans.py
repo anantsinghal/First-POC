@@ -9,6 +9,11 @@ from app.ingestion.base import IngestionError
 from app.ingestion.csv_source import CsvSource
 from app.ingestion.multi_csv_source import MultiCsvSource
 from app.ingestion.salesforce_source import SalesforceObjectSource
+from app.ingestion.sqlite_source import SqliteTableSource
+
+import os
+import shutil
+import tempfile
 from app.salesforce import SAFE_API_NAME, SalesforceClient, SalesforceError, session_from_environment
 from app.services.errors import NotFoundError
 
@@ -97,6 +102,33 @@ async def multi_scan(
         return await container.scan_service.run_scan(source)
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
+
+
+@router.post("/api/scans/database")
+async def database_scan(
+    table_name: str = Query(min_length=1, max_length=80),
+    file: UploadFile = File(...),
+    container: Container = Depends(get_container),
+) -> dict[str, Any]:
+    if not (file.filename or "").lower().endswith((".db", ".sqlite", ".sqlite3")):
+        raise HTTPException(400, "Upload a SQLite database file")
+    raw = await file.read()
+    if len(raw) > 25_000_000:
+        raise HTTPException(413, "POC upload limit is 25 MB")
+    tmpdir = tempfile.mkdtemp()
+    db_path = os.path.join(tmpdir, file.filename or "upload.db")
+    try:
+        with open(db_path, "wb") as f:
+            f.write(raw)
+        source = SqliteTableSource(db_path=db_path, table_name=table_name)
+        return await container.scan_service.run_scan(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 @router.post("/api/scans/salesforce")

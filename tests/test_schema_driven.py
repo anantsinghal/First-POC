@@ -17,8 +17,8 @@ from app.domain.schema import (
     FieldType,
     ObjectSchema,
     schema_from_dict,
-    schema_from_salesforce_describe,
 )
+from app.ingestion.salesforce_schema import schema_from_salesforce_describe
 from app.domain.values import clean
 from app.ingestion.base import DataSource, LoadedDataset
 from app.policy.field_policy import DEFAULT_POLICY

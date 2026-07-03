@@ -32,6 +32,8 @@ never-before-seen `Project__c`).
 - *Learned*: association-rule pattern breaks; **Isolation-Forest ML** (cohort-aware — scores a record
   against its own segment, not the whole object).
 - *Relationship/graph*: orphan / dangling references, missing-expected-children.
+
+The **same engine** also scans SQL databases (SQLite adapter today; same picklist/orphan/required detectors, zero engine change).
 - *Duplication*: possible duplicates by Name.
 
 **Trust & operations:**
@@ -58,7 +60,7 @@ never-before-seen `Project__c`).
 `GET /` · `GET /tutorial` · `GET /api/health`
 `POST /api/scans/demo` · `POST /api/scans/upload?object_name=` · `POST /api/scans/multi?primary_object=`
 (primary + related CSVs) · `POST /api/scans/profile` (bounded-memory profile only) ·
-`POST /api/scans/salesforce` · `POST /api/salesforce/verify`
+`POST /api/scans/salesforce` · `POST /api/scans/database?table_name=` · `POST /api/salesforce/verify`
 `GET /api/scans` · `GET /api/scans/{id}` · `GET /api/scans/{id}/quality`
 `GET /api/findings` · `POST /api/findings/{id}/feedback`
 `GET /api/dashboard` · `GET /api/metrics` · `GET /api/audit` · `POST /api/admin/purge`

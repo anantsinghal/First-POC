@@ -118,8 +118,8 @@ code, not from memory:
 | Feedback captured as first-class data | ✅ | `feedback` table, suppression across re-scans, acceptance/false-positive metrics, quality score + trend. |
 | Honest coverage, audit, retention, boundary deployment | ✅ | sampled-scan downgrade, audit log, purge, single-tenant in-boundary design. |
 | **Supervised model trained on labels** | ⏳ phase 4 | labels are being captured but no ranking model yet — correctly deferred until real labels accumulate. |
-| **Second adapter (database)** | ⏳ phase 3 | only Salesforce + CSV today; the `DataSource` seam is ready for it. |
-| Translator placement | ⚠️ minor | `schema_from_salesforce_describe` sits in `app/domain/schema.py` (no coupling — it takes a plain dict — but belongs in the adapter layer when the core is extracted in phase 3). |
+| **Second adapter (database)** | ✅ (SQLite; PostgreSQL = same shape via information_schema, listed next) | the `DataSource` seam proved by SqliteTableSource. |
+| Translator placement | ✅ (moved to adapter) | `schema_from_salesforce_describe` now lives in `app/ingestion/salesforce_schema.py`. |
 
 **Verdict:** nothing in v1 has to be undone to become the universal platform. The remaining work is
 additive: run on real data (2), extract the seam + add a DB adapter (3), train on labels (4).

@@ -6,7 +6,8 @@ from pathlib import Path
 from app.detection.base import DetectionContext
 from app.detection.schema_driven.format_validity import FormatValidityDetector
 from app.detection.registry import build_default_registry
-from app.domain.schema import FieldDescriptor, FieldType, ObjectSchema, schema_from_salesforce_describe
+from app.domain.schema import FieldDescriptor, FieldType, ObjectSchema
+from app.ingestion.salesforce_schema import schema_from_salesforce_describe
 from app.domain.values import clean
 from app.policy.field_policy import DEFAULT_POLICY
 
