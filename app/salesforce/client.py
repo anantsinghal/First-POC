@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import xml.etree.ElementTree as ET
+from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
@@ -75,6 +76,52 @@ class SalesforceClient:
         response = await self._request("POST", self.metadata_url, content=envelope.encode(), headers={"Content-Type": "text/xml; charset=UTF-8", "SOAPAction": ""})
         root = ET.fromstring(response.text)
         return len(root.findall(".//{http://soap.sforce.com/2006/04/metadata}result"))
+
+    async def bulk_create_query_job(self, soql: str) -> str:
+        """Create Bulk API 2.0 query job; return the job id."""
+        payload = {"operation": "query", "query": soql}
+        response = await self._request(
+            "POST",
+            f"{self.data_base_url}/jobs/query",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        data = response.json()
+        return data["id"]
+
+    async def bulk_job_status(self, job_id: str) -> str:
+        """Return job state; raise SalesforceError (with errorMessage) on Failed/Aborted."""
+        response = await self._request("GET", f"{self.data_base_url}/jobs/query/{job_id}")
+        data = response.json()
+        state = data.get("state", "")
+        if state in ("Failed", "Aborted"):
+            msg = data.get("errorMessage") or f"Job {state}"
+            raise SalesforceError(response.status_code or 502, msg)
+        return state
+
+    async def bulk_job_results_pages(self, job_id: str, *, max_records: int) -> AsyncIterator[str]:
+        """Async generator of raw CSV result pages; stop on 'null' locator or record budget."""
+        base = f"{self.data_base_url}/jobs/query/{job_id}/results"
+        headers = {"Accept": "text/csv"}
+        locator: str | None = None
+        records_yielded = 0
+        while True:
+            url = base if not locator else f"{base}?locator={locator}"
+            response = await self._request("GET", url, headers=headers)
+            text = response.text
+            yield text
+            # approx record count (header + data lines)
+            if text:
+                lines = [ln for ln in text.splitlines() if ln.strip()]
+                page_recs = max(0, len(lines) - 1)
+                records_yielded += page_recs
+            locator = response.headers.get("Sforce-Locator")
+            if locator is None:
+                break
+            if str(locator).lower() == "null":
+                break
+            if records_yielded >= max_records:
+                break
 
     @staticmethod
     def _validate_object(object_name: str) -> None:

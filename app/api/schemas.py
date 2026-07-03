@@ -12,3 +12,8 @@ class FeedbackInput(BaseModel):
 class SalesforceScanInput(BaseModel):
     object_name: str = Field(default="Opportunity", min_length=1, max_length=80)
     max_records: int = Field(default=500, ge=1, le=2000)
+
+
+class BulkScanInput(BaseModel):
+    object_name: str = Field(default="Opportunity", min_length=1, max_length=80)
+    max_records: int = Field(default=100_000, ge=1, le=1_000_000)

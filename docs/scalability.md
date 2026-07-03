@@ -53,7 +53,7 @@ scope succeeds.)
 1. OK Honest sampled/capped coverage (this phase).
 2. Set-based finding persistence (`executemany`).
 3. Scan planner + tiering (cheap checks first; ML/graph gated) + per-tenant budgets.
-4. [x] Bulk API 2.0 extraction -> Parquet staging -> DuckDB aggregate/profile pass.
+4. [x] Bulk API 2.0 extraction ✅ (mock-tested; live tuning pending real org).
 5. Online/2-pass detectors (streaming quantiles, sampled ML) for bounded memory.
 6. Incremental sync + record-state ledger + reconciliation; org-wide scheduler.
 

@@ -7,7 +7,7 @@ from ..coverage.grader import CoverageGrader
 from ..detection.base import DetectionContext
 from ..detection.registry import DetectorRegistry
 from ..domain.enums import CoverageGrade
-from ..domain.models import stable_hash
+from ..domain.models import Record, stable_hash
 from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
@@ -136,19 +136,19 @@ class ScanService:
         return self.get_scan_detail(scan_id)
 
     async def stream_scan(self, source: DataSource) -> dict:
-        """Bounded-memory DETECTING scan using iter_batches when available.
+        """Bounded-memory DETECTING scan using iter_batches or aiter_batches when available.
 
         Runs only tier-0 detectors per batch (plus orphan_reference when related_ids present).
         Uses a single DB connection for the entire write path. Tees record batches to ephemeral
         Parquet (if scale deps) for columnar profile; otherwise empty profile + note. Falls back
-        to run_scan when no iter_batches. All existing tests unaffected.
+        to run_scan when no iter/aiter_batches. Share per-batch via inner fn. All existing tests unaffected.
         """
         self.database.setup()
         scan_id = str(uuid4())
         created = now()
 
         # Fallback for sources without streaming support
-        if not hasattr(source, "iter_batches"):
+        if not hasattr(source, "iter_batches") and not hasattr(source, "aiter_batches"):
             return await self.run_scan(source)
 
         # Derive names (sqlite uses table_name; csv uses object_name etc)
@@ -162,8 +162,19 @@ class ScanService:
                 source_name = f"stream:{object_name}"
 
         # Prepare to iterate (re-entrant safe; use same iterator object to support one-shot iters)
-        batch_iter = source.iter_batches()
-        first_batch = next(batch_iter, None)
+        # Support async aiter_batches (for Bulk) by peeking first via __anext__; elif sync iter_batches
+        sync_iter = None
+        async_aiter = None
+        first_batch = None
+        if hasattr(source, "aiter_batches"):
+            async_aiter = source.aiter_batches()
+            try:
+                first_batch = await async_aiter.__anext__()
+            except StopAsyncIteration:
+                first_batch = None
+        elif hasattr(source, "iter_batches"):
+            sync_iter = source.iter_batches()
+            first_batch = next(sync_iter, None)
 
         fields: list[str] = list(
             getattr(source, "fieldnames", None)
@@ -183,38 +194,22 @@ class ScanService:
         flagged: set[str] = set()
         collected_candidates: list = []
 
-        def detecting_generator():
-            """Yields batches; side-effect: detect tier-0 per batch and accumulate findings/totals."""
+        def _process_batch(b: list[Record]) -> list[Record]:
+            """Shared per-batch body (detection + accumulators). Used by both sync/async paths."""
             nonlocal total_records, total_findings, batches
-            if first_batch is not None:
-                b = first_batch
-                batches += 1
-                ctx = DetectionContext(
-                    object_name, b, fields, self.policy, None,
-                    schema=schema, related_ids=related_ids or {},
-                )
-                cands = self.registry.detect(ctx, include=tier0)
-                total_findings += len(cands)
-                collected_candidates.extend(cands)
-                for c in cands:
-                    if c.record_id:
-                        flagged.add(c.record_id)
-                total_records += len(b)
-                yield b
-            for b in batch_iter:
-                batches += 1
-                ctx = DetectionContext(
-                    object_name, b, fields, self.policy, None,
-                    schema=schema, related_ids=related_ids or {},
-                )
-                cands = self.registry.detect(ctx, include=tier0)
-                total_findings += len(cands)
-                collected_candidates.extend(cands)
-                for c in cands:
-                    if c.record_id:
-                        flagged.add(c.record_id)
-                total_records += len(b)
-                yield b
+            batches += 1
+            ctx = DetectionContext(
+                object_name, b, fields, self.policy, None,
+                schema=schema, related_ids=related_ids or {},
+            )
+            cands = self.registry.detect(ctx, include=tier0)
+            total_findings += len(cands)
+            collected_candidates.extend(cands)
+            for c in cands:
+                if c.record_id:
+                    flagged.add(c.record_id)
+            total_records += len(b)
+            return b
 
         # Columnar profile via tee if available; detection side-effects happen during consumption
         if self._columnar_available():
@@ -229,8 +224,25 @@ class ScanService:
             try:
                 cols = fields or list(getattr(source, "fieldnames", []))
                 if cols:
-                    write_record_batches(path, detecting_generator(), cols)
-                    profile = ColumnarProfiler().profile(path, cols)
+                    if async_aiter is not None:
+                        # async aiter path (e.g. bulk): consume with async for; use list of batches for write (small in practice)
+                        detected_batches: list[list[Record]] = []
+                        if first_batch is not None:
+                            detected_batches.append(_process_batch(first_batch))
+                        if async_aiter:
+                            async for b in async_aiter:
+                                detected_batches.append(_process_batch(b))
+                        write_record_batches(path, detected_batches, cols)
+                        profile = ColumnarProfiler().profile(path, cols)
+                    else:
+                        def detecting_generator():
+                            """Yields batches; side-effect: detect tier-0 per batch and accumulate findings/totals."""
+                            if first_batch is not None:
+                                yield _process_batch(first_batch)
+                            for b in (sync_iter or []):
+                                yield _process_batch(b)
+                        write_record_batches(path, detecting_generator(), cols)
+                        profile = ColumnarProfiler().profile(path, cols)
                 else:
                     profile = self.profiler.profile([], fields)
             finally:
@@ -245,8 +257,17 @@ class ScanService:
             profile_note = ""
         else:
             # Consume for detection only (no parquet)
-            for _ in detecting_generator():
-                pass
+            if async_aiter is not None:
+                if first_batch is not None:
+                    _process_batch(first_batch)
+                if async_aiter:
+                    async for b in async_aiter:
+                        _process_batch(b)
+            else:
+                if first_batch is not None:
+                    _process_batch(first_batch)
+                for b in (sync_iter or []):
+                    _process_batch(b)
             profile = self.profiler.profile([], fields)
             profile_note = "profile skipped (scale deps unavailable)"
 

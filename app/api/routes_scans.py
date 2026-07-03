@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from app.ingestion.base import IngestionError
 from app.ingestion.csv_source import CsvSource
 from app.ingestion.multi_csv_source import MultiCsvSource
+from app.ingestion.salesforce_bulk_source import SalesforceBulkSource
 from app.ingestion.salesforce_source import SalesforceObjectSource
 from app.ingestion.sqlite_source import SqliteTableSource
 
@@ -18,7 +19,7 @@ from app.salesforce import SAFE_API_NAME, SalesforceClient, SalesforceError, ses
 from app.services.errors import NotFoundError
 
 from .container import Container, get_container
-from .schemas import SalesforceScanInput
+from .schemas import BulkScanInput, SalesforceScanInput
 
 router = APIRouter()
 
@@ -175,6 +176,29 @@ async def scan_salesforce(
             max_records=input.max_records,
         )
         return await container.scan_service.run_scan(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    except SalesforceError as exc:
+        raise HTTPException(502 if exc.status_code else 409, str(exc)) from exc
+
+
+@router.post("/api/scans/salesforce/bulk")
+async def scan_salesforce_bulk(
+    input: BulkScanInput, container: Container = Depends(get_container)
+) -> dict[str, Any]:
+    """Bulk API 2.0 backed streaming scan (tier-0 only). Same session/env + error mapping as /salesforce."""
+    if not SAFE_API_NAME.fullmatch(input.object_name):
+        raise HTTPException(400, "Invalid Salesforce object API name")
+    try:
+        session = await session_from_environment()
+        client = SalesforceClient(session)
+        source = SalesforceBulkSource(
+            client=client,
+            session=session,
+            object_name=input.object_name,
+            max_records=input.max_records,
+        )
+        return await container.scan_service.stream_scan(source)
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     except SalesforceError as exc:
