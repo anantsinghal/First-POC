@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import uuid4
 
 from ..coverage.grader import CoverageGrader
 from ..detection.base import DetectionContext
 from ..detection.registry import DetectorRegistry
 from ..domain.enums import CoverageGrade
+from ..domain.models import stable_hash
 from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
 from ..persistence.repositories import AuditRepository, CoverageRepository, FindingRepository, ScanRepository
-from ..planning.planner import ScanPlanner
+from ..planning.planner import DETECTOR_TIERS, ScanPlanner
 from ..policy.field_policy import FieldPolicy
 from ..profiling.profiler import Profiler
 
@@ -129,6 +131,191 @@ class ScanService:
                         "row_count": len(dataset.records),
                         "deferred_detectors": [] if plan is None else [detector_id for detector_id, _ in plan.skipped],
                         "planned_detectors": 0 if plan is None else len(plan.included_ids),
+                    },
+                )
+        return self.get_scan_detail(scan_id)
+
+    async def stream_scan(self, source: DataSource) -> dict:
+        """Bounded-memory DETECTING scan using iter_batches when available.
+
+        Runs only tier-0 detectors per batch (plus orphan_reference when related_ids present).
+        Uses a single DB connection for the entire write path. Tees record batches to ephemeral
+        Parquet (if scale deps) for columnar profile; otherwise empty profile + note. Falls back
+        to run_scan when no iter_batches. All existing tests unaffected.
+        """
+        self.database.setup()
+        scan_id = str(uuid4())
+        created = now()
+
+        # Fallback for sources without streaming support
+        if not hasattr(source, "iter_batches"):
+            return await self.run_scan(source)
+
+        # Derive names (sqlite uses table_name; csv uses object_name etc)
+        object_name = getattr(source, "object_name", None) or getattr(source, "table_name", "Unknown")
+        source_name = getattr(source, "source_name", None)
+        if source_name is None:
+            if hasattr(source, "db_path") and object_name != "Unknown":
+                dbn = Path(getattr(source, "db_path")).name
+                source_name = f"sqlite:{dbn}/{object_name}"
+            else:
+                source_name = f"stream:{object_name}"
+
+        # Prepare to iterate (re-entrant safe; use same iterator object to support one-shot iters)
+        batch_iter = source.iter_batches()
+        first_batch = next(batch_iter, None)
+
+        fields: list[str] = list(
+            getattr(source, "fieldnames", None)
+            or (list(first_batch[0].keys()) if first_batch else [])
+        )
+        schema = getattr(source, "schema", None)
+        related_ids = getattr(source, "related_ids", None) or {}
+
+        # Tier-0 include set (from planner constant) + orphan_reference opportunistically
+        tier0 = frozenset(d for d, t in DETECTOR_TIERS.items() if t == 0)
+        if related_ids:
+            tier0 = tier0 | {"orphan_reference"}
+
+        total_records = 0
+        total_findings = 0
+        batches = 0
+        flagged: set[str] = set()
+        collected_candidates: list = []
+
+        def detecting_generator():
+            """Yields batches; side-effect: detect tier-0 per batch and accumulate findings/totals."""
+            nonlocal total_records, total_findings, batches
+            if first_batch is not None:
+                b = first_batch
+                batches += 1
+                ctx = DetectionContext(
+                    object_name, b, fields, self.policy, None,
+                    schema=schema, related_ids=related_ids or {},
+                )
+                cands = self.registry.detect(ctx, include=tier0)
+                total_findings += len(cands)
+                collected_candidates.extend(cands)
+                for c in cands:
+                    if c.record_id:
+                        flagged.add(c.record_id)
+                total_records += len(b)
+                yield b
+            for b in batch_iter:
+                batches += 1
+                ctx = DetectionContext(
+                    object_name, b, fields, self.policy, None,
+                    schema=schema, related_ids=related_ids or {},
+                )
+                cands = self.registry.detect(ctx, include=tier0)
+                total_findings += len(cands)
+                collected_candidates.extend(cands)
+                for c in cands:
+                    if c.record_id:
+                        flagged.add(c.record_id)
+                total_records += len(b)
+                yield b
+
+        # Columnar profile via tee if available; detection side-effects happen during consumption
+        if self._columnar_available():
+            import os
+            import tempfile
+
+            from ..profiling.columnar_profiler import ColumnarProfiler
+            from ..staging.parquet_store import write_record_batches
+
+            staging_dir = tempfile.mkdtemp(prefix="scan_stream_")
+            path = os.path.join(staging_dir, "records.parquet")
+            try:
+                cols = fields or list(getattr(source, "fieldnames", []))
+                if cols:
+                    write_record_batches(path, detecting_generator(), cols)
+                    profile = ColumnarProfiler().profile(path, cols)
+                else:
+                    profile = self.profiler.profile([], fields)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+                try:
+                    os.rmdir(staging_dir)
+                except OSError:
+                    pass
+            profile_note = ""
+        else:
+            # Consume for detection only (no parquet)
+            for _ in detecting_generator():
+                pass
+            profile = self.profiler.profile([], fields)
+            profile_note = "profile skipped (scale deps unavailable)"
+
+        source_hash = stable_hash({
+            "object": object_name, "fields": fields, "count": total_records, "mode": "streamed"
+        })
+
+        # Entire write path under ONE connection
+        with self.database.connect() as conn:
+            self.scans.insert_running(
+                conn,
+                scan_id=scan_id,
+                source_name=source_name,
+                object_name=object_name,
+                created_at=created,
+                row_count=total_records,
+                source_hash=source_hash,
+                fields=fields,
+            )
+            coverage = self.grader.grade(
+                object_name, [], fields, record_count=total_records,
+                sampled=getattr(source, "truncated", False),
+            )
+            self.coverage_repo.insert(conn, scan_id, coverage)
+            self.findings.upsert_many(
+                conn,
+                scan_id=scan_id,
+                candidates=collected_candidates,
+                source_hash=source_hash,
+                scan_created_at=created,
+            )
+            notes = (
+                f"streamed scan: {total_findings} findings from tier-0 detectors over {batches} batches; "
+                f"statistical/pattern/ML deferred (streaming)"
+            )
+            if profile_note:
+                notes = notes + "; " + profile_note
+            self.scans.complete(
+                conn,
+                scan_id=scan_id,
+                completed_at=now(),
+                profile=profile.to_dict(),
+                notes=notes,
+            )
+            self.scans.save_quality(
+                conn,
+                scan_id=scan_id,
+                observed_records=total_records,
+                flagged_records=len(flagged),
+            )
+            if schema is not None:
+                self.scans.save_schema(
+                    conn, scan_id=scan_id, object_name=object_name, schema=schema.to_dict()
+                )
+            if self.audit is not None:
+                self.audit.append(
+                    conn,
+                    event="scan_streamed",
+                    actor="system",
+                    scan_id=scan_id,
+                    object_name=object_name,
+                    detail={
+                        "row_count": total_records,
+                        "batches": batches,
+                        "finding_count": total_findings,
+                        "deferred": [
+                            "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
+                            "missing_children", "pattern_break", "ml_anomaly",
+                        ],
                     },
                 )
         return self.get_scan_detail(scan_id)

@@ -131,6 +131,34 @@ async def database_scan(
             pass
 
 
+@router.post("/api/scans/database/stream")
+async def database_stream_scan(
+    table_name: str = Query(min_length=1, max_length=80),
+    file: UploadFile = File(...),
+    container: Container = Depends(get_container),
+) -> dict[str, Any]:
+    """Streaming (bounded-memory) detecting scan over SQLite table. Same params as /database."""
+    if not (file.filename or "").lower().endswith((".db", ".sqlite", ".sqlite3")):
+        raise HTTPException(400, "Upload a SQLite database file")
+    raw = await file.read()
+    if len(raw) > 25_000_000:
+        raise HTTPException(413, "POC upload limit is 25 MB")
+    tmpdir = tempfile.mkdtemp()
+    db_path = os.path.join(tmpdir, file.filename or "upload.db")
+    try:
+        with open(db_path, "wb") as f:
+            f.write(raw)
+        source = SqliteTableSource(db_path=db_path, table_name=table_name)
+        return await container.scan_service.stream_scan(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    finally:
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+        except Exception:
+            pass
+
+
 @router.post("/api/scans/salesforce")
 async def scan_salesforce(
     input: SalesforceScanInput, container: Container = Depends(get_container)

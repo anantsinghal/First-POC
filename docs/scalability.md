@@ -62,8 +62,6 @@ Integration path note: the scan service PROFILES large objects out-of-core - the
 `ColumnarProfiler` (DuckDB) -> purge, with identical Profile output (parity-verified). A STREAMING
 source (`CsvSource.iter_batches`) + a bounded-memory PROFILE-ONLY scan (`ScanService.profile_source`,
 endpoint `POST /api/scans/profile`) now stream records straight into Parquet (never fully materialised)
-and profile out-of-core, no findings. Still ahead: streaming/columnar DETECTION passes (tier-0 checks
-per batch + sampled ML) so a full detecting scan of a huge object is also bounded-memory, plus Bulk API
-2.0 extraction + incremental sync (best built against a live org's volumes).
+and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) are now implemented; statistical/pattern/ML remain deferred by design. Plus Bulk API 2.0 extraction + incremental sync (best built against a live org's volumes).
 
 The invariant to protect through all of this: **detection logic stays generic and metadata-driven; only the data plane (extraction/storage/orchestration) grows.** That keeps the product reusable across every org while it scales.
