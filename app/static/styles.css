@@ -6,6 +6,10 @@
 .metrics-chips { display:flex; flex-wrap:wrap; gap:8px; }
 .metric-chip { font-size:.78rem; color:var(--muted); background:#101c31; border:1px solid var(--line); padding:5px 10px; border-radius:999px; }
 .metric-chip strong { color:var(--ink); }
+.chk { display:flex; flex-direction:row; align-items:center; gap:6px; }
+.drift-row { font-size:.82rem; color:var(--muted); border-bottom:1px solid var(--line); padding:4px 0; }
+.drift-row strong { color:var(--warn); font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
+.rank-tag { font-size:.68rem; color:var(--warn); white-space:nowrap; }
 .quality-score { font-size:2rem; font-weight:800; letter-spacing:-.04em; }
 .quality-meta { color:var(--muted); margin:.35rem 0 0; }
 @media (max-width:620px) { header{align-items:start;flex-direction:column}.stats{grid-template-columns:1fr}.scan{flex-direction:column;gap:3px} }
