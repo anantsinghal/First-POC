@@ -63,7 +63,9 @@ The **same engine** also scans SQL databases (SQLite adapter today; same picklis
 (primary + related CSVs) · `POST /api/scans/profile` (bounded-memory profile only) ·
 `POST /api/scans/database/stream` (tier-0 streaming detection) · `POST /api/scans/database?table_name=` ·
 `POST /api/scans/salesforce` · `POST /api/scans/salesforce/incremental` ·
-`POST /api/scans/salesforce/reconcile` · `POST /api/scans/salesforce/bulk` · `POST /api/salesforce/verify`
+`POST /api/scans/salesforce/reconcile` · `POST /api/scans/salesforce/bulk` ·
+`POST /api/scans/salesforce/bulk/incremental` (delta Bulk scan via watermark) ·
+`POST /api/scans/salesforce/org` (org-wide discover/size/route orchestrator) · `POST /api/salesforce/verify`
 `GET /api/scans` · `GET /api/scans/{id}` · `GET /api/scans/{id}/quality` · `GET /api/scans/{id}/drift`
 `GET /api/findings` · `POST /api/findings/{id}/feedback`
 `GET /api/dashboard` · `GET /api/metrics` · `GET /api/audit` · `POST /api/admin/purge`

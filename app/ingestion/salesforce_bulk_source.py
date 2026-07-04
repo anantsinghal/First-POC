@@ -25,6 +25,7 @@ class SalesforceBulkSource(DataSource):
         client: SalesforceClient,
         session: SalesforceSession,
         object_name: str,
+        modified_since: str | None = None,
         max_records: int = 1_000_000,
         poll_interval: float = 2.0,
         max_polls: int = 60,
@@ -36,6 +37,7 @@ class SalesforceBulkSource(DataSource):
         self.client = client
         self.session = session
         self.object_name = object_name
+        self.modified_since = modified_since
         self.max_records = max_records
         self.poll_interval = poll_interval
         self.max_polls = max_polls
@@ -85,6 +87,8 @@ class SalesforceBulkSource(DataSource):
             fields = fields[:MAX_QUERY_FIELDS]
         self.fieldnames = fields
         soql = f"SELECT {', '.join(fields)} FROM {self.object_name}"
+        if self.modified_since is not None:
+            soql = soql + f" WHERE SystemModstamp >= {self.modified_since}"
         job_id = await self.client.bulk_create_query_job(soql)
         self._job_id = job_id
         last_state = "Unknown"

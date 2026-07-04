@@ -24,6 +24,7 @@ from ..services.dashboard_service import DashboardService
 from ..services.drift_service import DriftService
 from ..services.finding_service import FindingService
 from ..services.metrics_service import MetricsService
+from ..services.orchestrator_service import OrgScanOrchestrator
 from ..services.quality_service import QualityService
 from ..services.ranking_service import RankingService
 from ..services.retention_service import RetentionService
@@ -48,6 +49,7 @@ class Container:
     sync_service: SyncService
     ranking_service: RankingService
     drift_service: DriftService
+    orchestrator_service: OrgScanOrchestrator
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -112,6 +114,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         audit=audit,
     )
     drift_service = DriftService(database=database, scans=scans, audit=audit)
+    orchestrator_service = OrgScanOrchestrator(scan_service=scan_service, audit=audit, database=database)
 
     return Container(
         root=root,
@@ -127,6 +130,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         sync_service=sync_service,
         ranking_service=ranking_service,
         drift_service=drift_service,
+        orchestrator_service=orchestrator_service,
     )
 
 

@@ -17,3 +17,11 @@ class SalesforceScanInput(BaseModel):
 class BulkScanInput(BaseModel):
     object_name: str = Field(default="Opportunity", min_length=1, max_length=80)
     max_records: int = Field(default=100_000, ge=1, le=1_000_000)
+
+
+class OrgScanInput(BaseModel):
+    max_objects: int | None = Field(default=25, ge=1, le=500)
+    stream_threshold: int = Field(default=10_000, ge=1)
+    include: list[str] | None = None
+    exclude: list[str] | None = None
+    api_budget: int | None = Field(default=None, ge=1)

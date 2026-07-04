@@ -20,7 +20,7 @@ one pass. Specific limits (named, not hidden):
 | Extraction | REST/SOQL pagination into a Python list | loads all rows into memory; no Bulk API/streaming |
 | Detection | in-memory passes; IF/pattern/IQR build full matrices | O(N) memory; not chunked/online |
 | Persistence | findings upserted one-by-one | many SQL statements per scan |
-| Orchestration | one object per scan call | no org-wide planner/prioritization across hundreds of objects |
+| Orchestration | `OrgScanOrchestrator` discovers/sizes/routes objects **sequentially**, budget-aware | parallel scans need PostgreSQL (SQLite is single-writer); deferred until a real org needs it |
 | Orphan resolution | parent-Id existence probe capped (`parent_id_probe_limit`) | may miss orphans beyond the cap |
 
 **Most important rule, enforced now:** a capped/sampled scan must never *imply* completeness. As of
@@ -55,7 +55,10 @@ scope succeeds.)
 3. Scan planner + tiering (cheap checks first; ML/graph gated) + per-tenant budgets.
 4. [x] Bulk API 2.0 extraction ✅ (mock-tested; live tuning pending real org).
 5. [x] Online/2-pass detectors (streaming quantiles, sampled ML) for bounded memory. Statistical detectors now run as a streamed Parquet second pass and ML scores against a deterministic reservoir sample; pattern mining at scale remains deferred.
-6. [x] Incremental sync + record-state ledger + reconciliation ✅ (REST source, mock-tested; org-wide scheduler remains v2-live).
+6. [x] Incremental sync + record-state ledger + reconciliation ✅ (REST + Bulk sources, mock-tested) +
+   org-wide scheduler ✅ (`OrgScanOrchestrator`: discover -> size -> route memory/bulk-stream ->
+   budget-aware; sequential v1 - SQLite is single-writer, so parallel per-object scans are deferred
+   until a real org's object count demands it and PostgreSQL replaces SQLite as the catalog store).
 
 Integration path note: the scan service PROFILES large objects out-of-core - the planner
 (`use_columnar_profile`, default >= 100k records) selects staging records to an ephemeral Parquet ->
