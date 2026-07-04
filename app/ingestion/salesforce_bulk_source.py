@@ -52,11 +52,18 @@ class SalesforceBulkSource(DataSource):
     async def _prepare(self) -> None:
         """Describe-driven selection (reusing constants + schema builder), create job, poll to JobComplete."""
         describe = await self.client.describe_sobject(self.object_name)
+        if describe.get("queryable") is False:
+            raise IngestionError(
+                f"Object '{self.object_name}' is not queryable for this integration user; no trustworthy scan is possible.",
+                status_code=422,
+            )
         self.schema = schema_from_salesforce_describe(describe)
+        # NOTE: real Salesforce field-level describe has NO "queryable" key (only object-level,
+        # checked above). Ordinary fields are selectable; only exclude compound/unsafe types.
         readable = {
             f.get("name")
             for f in describe.get("fields", [])
-            if f.get("name") and f.get("queryable")
+            if f.get("name")
         }
         if self.fields is not None:
             selected = [f for f in self.fields if f in readable]
@@ -64,8 +71,7 @@ class SalesforceBulkSource(DataSource):
             selected = [
                 f["name"]
                 for f in describe.get("fields", [])
-                if f.get("queryable")
-                and f.get("name")
+                if f.get("name")
                 and (f.get("type") or "").lower() not in EXCLUDED_FIELD_TYPES
                 and "." not in f["name"]
             ]

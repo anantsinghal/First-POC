@@ -63,6 +63,32 @@ def test_schema_from_salesforce_describe_format_fields():
     assert schema.fields["Website"].data_type == FieldType.URL
 
 
+def test_url_accepts_root_relative_paths():
+    """Root-relative paths (e.g. Salesforce PhotoUrl-style values) are valid urls, not a defect.
+
+    Found via real-org testing (2026-07-04): Account.PhotoUrl and custom Picture_URL__c fields
+    store paths like '/services/images/photo/...' and '/resource/.../pic.png' as normal,
+    correct values — these must NOT be flagged as invalid_format.
+    """
+    schema = ObjectSchema(
+        object_name="Account",
+        fields={"PhotoUrl": FieldDescriptor(name="PhotoUrl", data_type=FieldType.URL)},
+    )
+    records = [
+        {"Id": "1", "PhotoUrl": "/services/images/photo/001J200000K1PXYIA3"},
+        {"Id": "2", "PhotoUrl": "/resource/1701670091000/carhub_images/renault_triber.png"},
+        {"Id": "3", "PhotoUrl": "https://example.com/photo.png"},  # absolute still valid
+        {"Id": "4", "PhotoUrl": "not a url at all"},  # still correctly invalid (has whitespace, no scheme/leading slash)
+    ]
+    ctx = DetectionContext(
+        object_name="Account", records=records, fields=["Id", "PhotoUrl"],
+        policy=DEFAULT_POLICY, schema=schema,
+    )
+    cands = FormatValidityDetector().detect(ctx)
+    flagged_ids = {c.record_id for c in cands}
+    assert flagged_ids == {"4"}
+
+
 def test_format_no_schema_noop():
     records = [{"Id": "1", "Email": "bad"}]
     ctx = DetectionContext(

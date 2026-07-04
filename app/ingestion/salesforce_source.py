@@ -53,11 +53,19 @@ class SalesforceObjectSource(DataSource):
     async def load(self) -> LoadedDataset:
         """Describe, filter fields, query, clean records to strings, compute deterministic source_hash via stable_hash."""
         describe = await self.client.describe_sobject(self.object_name)
+        if describe.get("queryable") is False:
+            raise IngestionError(
+                f"Object '{self.object_name}' is not queryable for this integration user; no trustworthy scan is possible.",
+                status_code=422,
+            )
         schema = schema_from_salesforce_describe(describe)
+        # NOTE: Salesforce field-level describe metadata has NO "queryable" key (that flag only
+        # exists at the object/sobject level, checked above). Ordinary fields are selectable in
+        # SOQL; we only exclude compound/unsafe types (EXCLUDED_FIELD_TYPES) and compound sub-paths.
         readable = {
             f.get("name")
             for f in describe.get("fields", [])
-            if f.get("name") and f.get("queryable")
+            if f.get("name")
         }
         if self.fields is not None:
             selected = [f for f in self.fields if f in readable]
@@ -65,8 +73,7 @@ class SalesforceObjectSource(DataSource):
             selected = [
                 f["name"]
                 for f in describe.get("fields", [])
-                if f.get("queryable")
-                and f.get("name")
+                if f.get("name")
                 and (f.get("type") or "").lower() not in EXCLUDED_FIELD_TYPES
                 and "." not in f["name"]
             ]
