@@ -54,7 +54,7 @@ scope succeeds.)
 2. Set-based finding persistence (`executemany`).
 3. Scan planner + tiering (cheap checks first; ML/graph gated) + per-tenant budgets.
 4. [x] Bulk API 2.0 extraction ✅ (mock-tested; live tuning pending real org).
-5. Online/2-pass detectors (streaming quantiles, sampled ML) for bounded memory.
+5. [x] Online/2-pass detectors (streaming quantiles, sampled ML) for bounded memory. Statistical detectors now run as a streamed Parquet second pass and ML scores against a deterministic reservoir sample; pattern mining at scale remains deferred.
 6. [x] Incremental sync + record-state ledger + reconciliation ✅ (REST source, mock-tested; org-wide scheduler remains v2-live).
 
 Integration path note: the scan service PROFILES large objects out-of-core - the planner
@@ -62,6 +62,6 @@ Integration path note: the scan service PROFILES large objects out-of-core - the
 `ColumnarProfiler` (DuckDB) -> purge, with identical Profile output (parity-verified). A STREAMING
 source (`CsvSource.iter_batches`) + a bounded-memory PROFILE-ONLY scan (`ScanService.profile_source`,
 endpoint `POST /api/scans/profile`) now stream records straight into Parquet (never fully materialised)
-and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) are now implemented with true bounded-memory Parquet teeing and per-batch finding checkpoints; statistical/pattern/ML remain deferred by design.
+and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) now extend into a second streamed Parquet pass for exact DuckDB-backed stats plus sampled Isolation Forest scoring, with bounded memory and per-batch finding checkpoints. Pattern mining and some graph checks remain deferred by design.
 
 The invariant to protect through all of this: **detection logic stays generic and metadata-driven; only the data plane (extraction/storage/orchestration) grows.** That keeps the product reusable across every org while it scales.

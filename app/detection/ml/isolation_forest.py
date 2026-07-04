@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import statistics
 from collections import defaultdict
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from ...domain.models import CheckRequirement
@@ -13,7 +15,188 @@ try:
 
     _SKLEARN_AVAILABLE = True
 except Exception:
+    np = None
+    IsolationForest = None
     _SKLEARN_AVAILABLE = False
+
+
+@dataclass(frozen=True)
+class FeatureColumnSpec:
+    kind: str
+    source_field: str
+    feature_name: str
+    median: float | None = None
+    onehot_value: str | None = None
+
+
+@dataclass(frozen=True)
+class FeatureSpec:
+    columns: tuple[FeatureColumnSpec, ...]
+
+    @property
+    def feature_names(self) -> list[str]:
+        return [column.feature_name for column in self.columns]
+
+
+def build_feature_spec(
+    records: list[dict[str, str]],
+    fields: list[str],
+    *,
+    categorical_max_distinct: int = 8,
+) -> FeatureSpec:
+    """Build the feature spec using the exact field-selection rules from the detector."""
+    columns: list[FeatureColumnSpec] = []
+    n = len(records)
+    for field in fields:
+        if field == "Id":
+            continue
+        raw_vals = [rec.get(field) for rec in records]
+        non_empty_raw = [v for v in raw_vals if clean(v)]
+        null_rate = (n - len(non_empty_raw)) / n if n > 0 else 0.0
+
+        num_vals = [pf for v in non_empty_raw if (pf := parse_float(v)) is not None]
+        num_rate = len(num_vals) / len(non_empty_raw) if non_empty_raw else 0.0
+        if num_rate >= 0.6 and len(num_vals) >= 2:
+            columns.append(
+                FeatureColumnSpec(
+                    kind="numeric",
+                    source_field=field,
+                    feature_name=field,
+                    median=float(statistics.median(num_vals)),
+                )
+            )
+            continue
+
+        date_vals = [pd.toordinal() for v in non_empty_raw if (pd := parse_date(v)) is not None]
+        date_rate = len(date_vals) / len(non_empty_raw) if non_empty_raw else 0.0
+        if date_rate >= 0.6 and len(date_vals) >= 2:
+            columns.append(
+                FeatureColumnSpec(
+                    kind="date",
+                    source_field=field,
+                    feature_name=f"{field}__ordinal",
+                    median=float(statistics.median(date_vals)),
+                )
+            )
+            continue
+
+        if 0 < null_rate < 1.0:
+            columns.append(
+                FeatureColumnSpec(
+                    kind="presence",
+                    source_field=field,
+                    feature_name=f"has_{field}",
+                )
+            )
+            continue
+
+        if field == "Name":
+            continue
+        distinct = {clean(v) for v in raw_vals if clean(v)}
+        if 1 < len(distinct) <= categorical_max_distinct:
+            for val in sorted(distinct):
+                columns.append(
+                    FeatureColumnSpec(
+                        kind="onehot",
+                        source_field=field,
+                        feature_name=f"{field}={val}",
+                        onehot_value=val,
+                    )
+                )
+    return FeatureSpec(columns=tuple(columns))
+
+
+def vectorize(records: list[dict[str, str]], spec: FeatureSpec) -> "np.ndarray":
+    """Apply a frozen feature spec to a record batch."""
+    if np is None:
+        raise RuntimeError("numpy not installed")
+    rows: list[list[float]] = []
+    for record in records:
+        row: list[float] = []
+        for column in spec.columns:
+            raw = record.get(column.source_field)
+            if column.kind == "numeric":
+                parsed = parse_float(raw)
+                row.append(float(parsed) if parsed is not None else float(column.median or 0.0))
+                continue
+            if column.kind == "date":
+                parsed_date = parse_date(raw)
+                row.append(
+                    float(parsed_date.toordinal()) if parsed_date is not None else float(column.median or 0.0)
+                )
+                continue
+            if column.kind == "presence":
+                row.append(1.0 if clean(raw) else 0.0)
+                continue
+            row.append(1.0 if clean(raw) == column.onehot_value else 0.0)
+        rows.append(row)
+    return np.array(rows, dtype=float)
+
+
+class StreamingIsolationForest:
+    def __init__(
+        self,
+        *,
+        contamination: float = 0.02,
+        random_state: int = 42,
+        n_estimators: int = 200,
+        min_sample: int = 50,
+    ) -> None:
+        self.contamination = contamination
+        self.random_state = random_state
+        self.n_estimators = n_estimators
+        self.min_sample = min_sample
+        self.spec: FeatureSpec | None = None
+        self.sample_size = 0
+        self._model = None
+        self._means = None
+        self._stds = None
+        self._threshold = 0.0
+
+    def fit(self, sample_records: list[dict[str, str]], fields: list[str]) -> bool:
+        if not _SKLEARN_AVAILABLE or len(sample_records) < self.min_sample:
+            return False
+        spec = build_feature_spec(sample_records, fields)
+        if len(spec.columns) < 2:
+            return False
+        X = vectorize(sample_records, spec)
+        if X.ndim != 2 or X.shape[0] < self.min_sample or X.shape[1] < 2:
+            return False
+
+        model = IsolationForest(
+            n_estimators=self.n_estimators,
+            contamination=self.contamination,
+            random_state=self.random_state,
+        )
+        model.fit(X)
+
+        stds = np.std(X, axis=0)
+        self.spec = spec
+        self.sample_size = int(X.shape[0])
+        self._model = model
+        self._means = np.mean(X, axis=0)
+        self._stds = np.where(stds == 0, 1.0, stds)
+        self._threshold = float(getattr(model, "offset_", 0.0))
+        return True
+
+    def score_batch(self, records: list[dict[str, str]]) -> list[tuple[int, float, list[dict]]]:
+        if not records or self.spec is None or self._model is None or self._means is None or self._stds is None:
+            return []
+        X = vectorize(records, self.spec)
+        preds = self._model.predict(X)
+        scores = self._model.score_samples(X)
+        flagged: list[tuple[int, float, list[dict]]] = []
+        for idx, pred in enumerate(preds):
+            if pred != -1:
+                continue
+            z_scores = (X[idx] - self._means) / self._stds
+            contribs = [
+                {"feature": name, "value": round(float(X[idx, j]), 3), "z": round(float(z_scores[j]), 2)}
+                for j, name in enumerate(self.spec.feature_names)
+            ]
+            contribs.sort(key=lambda c: abs(c["z"]), reverse=True)
+            flagged.append((idx, float(scores[idx]), contribs[:3]))
+        return flagged
 
 
 class IsolationForestDetector:
@@ -81,7 +264,6 @@ class IsolationForestDetector:
             else:
                 small_idxs.extend(idxs)
 
-        # Records in cohorts too small to model are scored against a whole-object baseline.
         if small_idxs and len(records) >= self.min_records:
             all_idxs = list(range(len(records)))
             candidates.extend(
@@ -97,50 +279,13 @@ class IsolationForestDetector:
         self, ctx: DetectionContext, records: list[dict[str, str]]
     ) -> tuple[list[str], list[list[float]]]:
         """Build (feature_names, columns) over all records. Numeric / date-ordinal / presence / one-hot."""
-        feature_names: list[str] = []
-        feature_matrix: list[list[float]] = []
-        n = len(records)
-        for field in ctx.fields:
-            if field == "Id":
-                continue
-            raw_vals = [rec.get(field) for rec in records]
-            non_empty_raw = [v for v in raw_vals if clean(v)]
-            null_rate = (n - len(non_empty_raw)) / n if n > 0 else 0.0
-
-            num_vals = [pf for v in non_empty_raw if (pf := parse_float(v)) is not None]
-            num_rate = len(num_vals) / len(non_empty_raw) if non_empty_raw else 0.0
-            if num_rate >= 0.6 and len(num_vals) >= 2:
-                median = float(np.median(num_vals))
-                col = [parse_float(v) if parse_float(v) is not None else median for v in raw_vals]
-                feature_names.append(field)
-                feature_matrix.append([float(c) for c in col])
-                continue
-
-            date_vals = [pd.toordinal() for v in non_empty_raw if (pd := parse_date(v)) is not None]
-            date_rate = len(date_vals) / len(non_empty_raw) if non_empty_raw else 0.0
-            if date_rate >= 0.6 and len(date_vals) >= 2:
-                median = float(np.median(date_vals))
-                col = []
-                for v in raw_vals:
-                    pd = parse_date(v)
-                    col.append(float(pd.toordinal()) if pd is not None else median)
-                feature_names.append(f"{field}__ordinal")
-                feature_matrix.append(col)
-                continue
-
-            if 0 < null_rate < 1.0:
-                feature_names.append(f"has_{field}")
-                feature_matrix.append([1.0 if clean(v) else 0.0 for v in raw_vals])
-                continue
-
-            if field == "Name":
-                continue
-            distinct = {clean(v) for v in raw_vals if clean(v)}
-            if 1 < len(distinct) <= self.categorical_max_distinct:
-                for val in sorted(distinct):
-                    feature_names.append(f"{field}={val}")
-                    feature_matrix.append([1.0 if clean(v) == val else 0.0 for v in raw_vals])
-        return feature_names, feature_matrix
+        spec = build_feature_spec(
+            records,
+            ctx.fields,
+            categorical_max_distinct=self.categorical_max_distinct,
+        )
+        X = vectorize(records, spec)
+        return spec.feature_names, X.T.tolist()
 
     def _select_cohort_fields(self, ctx: DetectionContext, records: list[dict[str, str]]) -> list[str]:
         """Configured cohort fields, else the first schema picklist field with sensible cardinality."""
@@ -158,7 +303,7 @@ class IsolationForestDetector:
 
     @staticmethod
     def _cohort_key(record: dict[str, str], cohort_fields: list[str]) -> str:
-        """Cohort key for a record ('' when no cohort fields → single whole-object group)."""
+        """Cohort key for a record ('' when no cohort fields -> single whole-object group)."""
         if not cohort_fields:
             return ""
         return " | ".join(f"{f}={clean(record.get(f))}" for f in cohort_fields)
@@ -201,7 +346,6 @@ class IsolationForestDetector:
 
         cohort_value_display = cohort_value
         if cohort_field and cohort_value is not None:
-            # cohort_value is the full key string; show just the value when single-field.
             cohort_value_display = cohort_value.split("=", 1)[-1]
 
         candidates: list[Candidate] = []

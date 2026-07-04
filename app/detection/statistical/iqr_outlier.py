@@ -5,6 +5,7 @@ from typing import ClassVar
 from ...domain.models import CheckRequirement
 from ...domain.values import numeric_values, parse_float
 from ..base import Candidate, DetectionContext, make_candidate
+from .thresholds import iqr_fences
 
 
 class IqrOutlierDetector:
@@ -22,11 +23,10 @@ class IqrOutlierDetector:
                 continue
             q1 = values[len(values) // 4]
             q3 = values[(len(values) * 3) // 4]
-            iqr = q3 - q1
-            if iqr <= 0:
+            fences = iqr_fences(q1, q3)
+            if fences is None:
                 continue
-            lower = q1 - 1.5 * iqr
-            upper = q3 + 1.5 * iqr
+            lower, upper = fences
             for record in ctx.records:
                 v = parse_float(record.get(field))
                 if v is None:

@@ -132,9 +132,11 @@ def test_stream_deferred_honesty(tmp_path: Path):
     assert streamed
     detail = streamed[0].get("detail", {})
     deferred = detail.get("deferred", [])
-    assert "numeric_outlier" in deferred
-    assert "ml_anomaly" in deferred
     assert "pattern_break" in deferred
+
+    findings = container.finding_service.list_findings(scan_id=scan["id"])
+    finding_types = {f["finding_type"] for f in findings}
+    assert not (finding_types & set(deferred))
 
 
 def test_stream_api_endpoint_and_error(tmp_path: Path):

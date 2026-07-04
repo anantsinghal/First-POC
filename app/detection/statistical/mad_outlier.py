@@ -6,6 +6,7 @@ from typing import ClassVar
 from ...domain.models import CheckRequirement
 from ...domain.values import numeric_values, parse_float
 from ..base import Candidate, DetectionContext, make_candidate
+from .thresholds import MAD_THRESHOLD, mad_z
 
 
 class MadOutlierDetector:
@@ -14,7 +15,7 @@ class MadOutlierDetector:
     id: str = "robust_outlier"
     requirement: ClassVar[CheckRequirement | None] = None  # scans whatever numeric fields exist
 
-    def __init__(self, threshold: float = 3.5) -> None:
+    def __init__(self, threshold: float = MAD_THRESHOLD) -> None:
         """Standard modified-z cutoff (default 3.5)."""
         self.threshold = threshold
 
@@ -33,7 +34,7 @@ class MadOutlierDetector:
                 v = parse_float(record.get(field))
                 if v is None:
                     continue
-                mz = 0.6745 * (v - med) / mad
+                mz = mad_z(v, med, mad)
                 if abs(mz) > self.threshold:
                     candidates.append(
                         make_candidate(

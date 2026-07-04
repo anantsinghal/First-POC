@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +16,8 @@ from ..persistence.repositories import AuditRepository, CoverageRepository, Find
 from ..planning.planner import DETECTOR_TIERS, ScanPlanner
 from ..policy.field_policy import FieldPolicy
 from ..profiling.profiler import Profiler
+from .streaming_stats import StreamingStatsPass
+from ..detection.ml.isolation_forest import StreamingIsolationForest
 
 from .errors import NotFoundError
 
@@ -187,6 +190,7 @@ class ScanService:
         schema = getattr(source, "schema", None)
         related_ids = getattr(source, "related_ids", None) or {}
         source_hash = stable_hash({"object": object_name, "fields": fields, "mode": "streamed"})
+        columnar_available = self._columnar_available()
 
         # Tier-0 include set (from planner constant) + orphan_reference opportunistically
         tier0 = frozenset(d for d, t in DETECTOR_TIERS.items() if t == 0)
@@ -197,6 +201,9 @@ class ScanService:
         total_findings = 0
         batches = 0
         flagged: set[str] = set()
+        reservoir_rng = random.Random(42)
+        reservoir_size = 5_000
+        sample_records: list[Record] = []
         with self.database.connect() as conn:
             self.scans.insert_running(
                 conn,
@@ -214,6 +221,15 @@ class ScanService:
                 """Shared per-batch body (detection + checkpointed persistence)."""
                 nonlocal total_records, total_findings, batches
                 batches += 1
+                for record in b:
+                    seen = total_records + 1
+                    if len(sample_records) < reservoir_size:
+                        sample_records.append(dict(record))
+                    else:
+                        replace_at = reservoir_rng.randrange(seen)
+                        if replace_at < reservoir_size:
+                            sample_records[replace_at] = dict(record)
+                    total_records = seen
                 ctx = DetectionContext(
                     object_name, b, fields, self.policy, None,
                     schema=schema, related_ids=related_ids or {},
@@ -231,10 +247,9 @@ class ScanService:
                 for c in cands:
                     if c.record_id:
                         flagged.add(c.record_id)
-                total_records += len(b)
 
             # Columnar profile via tee if available; detection side-effects happen during consumption
-            if self._columnar_available():
+            if columnar_available:
                 import os
                 import tempfile
 
@@ -244,6 +259,9 @@ class ScanService:
                 staging_dir = tempfile.mkdtemp(prefix="scan_stream_")
                 path = os.path.join(staging_dir, "records.parquet")
                 writer = None
+                used_sampled_ml = False
+                ran_streamed_stats = False
+                ml_fit_skipped = True
                 try:
                     cols = fields or list(getattr(source, "fieldnames", []))
                     if cols:
@@ -266,8 +284,55 @@ class ScanService:
                         writer.close()
                         writer = None
                         profile = ColumnarProfiler().profile(path, cols)
+                        stats_pass = StreamingStatsPass()
+                        aggs = stats_pass.numeric_aggregates(path, cols)
+                        if aggs:
+                            ran_streamed_stats = True
+                            for candidate_batch in stats_pass.flag_batches(
+                                path,
+                                cols,
+                                aggs,
+                                object_name=object_name,
+                                policy=self.policy,
+                            ):
+                                self.findings.upsert_many(
+                                    conn,
+                                    scan_id=scan_id,
+                                    candidates=candidate_batch,
+                                    source_hash=source_hash,
+                                    scan_created_at=created,
+                                )
+                                conn.commit()
+                                total_findings += len(candidate_batch)
+                                for candidate in candidate_batch:
+                                    if candidate.record_id:
+                                        flagged.add(candidate.record_id)
+                        forest = StreamingIsolationForest()
+                        ml_fit_skipped = not forest.fit(sample_records, cols)
+                        if not ml_fit_skipped:
+                            used_sampled_ml = True
+                            for candidate_batch in stats_pass.score_ml_batches(
+                                path,
+                                cols,
+                                forest,
+                                object_name=object_name,
+                                policy=self.policy,
+                            ):
+                                self.findings.upsert_many(
+                                    conn,
+                                    scan_id=scan_id,
+                                    candidates=candidate_batch,
+                                    source_hash=source_hash,
+                                    scan_created_at=created,
+                                )
+                                conn.commit()
+                                total_findings += len(candidate_batch)
+                                for candidate in candidate_batch:
+                                    if candidate.record_id:
+                                        flagged.add(candidate.record_id)
                     else:
                         profile = self.profiler.profile([], fields)
+                        ml_fit_skipped = True
                 finally:
                     if writer is not None:
                         writer.close()
@@ -281,6 +346,8 @@ class ScanService:
                         pass
                 profile_note = ""
             else:
+                used_sampled_ml = False
+                ml_fit_skipped = True
                 if async_aiter is not None:
                     if first_batch is not None:
                         _process_batch(first_batch)
@@ -301,10 +368,17 @@ class ScanService:
             )
             self.coverage_repo.insert(conn, scan_id, coverage)
             self.scans.set_row_count(conn, scan_id, total_records)
-            notes = (
-                f"streamed scan: {total_findings} findings from tier-0 detectors over {batches} batches; "
-                f"statistical/pattern/ML deferred (streaming)"
-            )
+            if columnar_available:
+                streamed_suffix = " + sampled ML" if used_sampled_ml else ""
+                notes = (
+                    f"streamed scan: {total_findings} findings (tier-0 + streamed stats{streamed_suffix}) "
+                    f"over {batches} batches; pattern mining and graph checks deferred (streaming)"
+                )
+            else:
+                notes = (
+                    f"streamed scan: {total_findings} findings from tier-0 detectors over {batches} batches; "
+                    f"statistical/pattern/ML deferred (streaming)"
+                )
             if profile_note:
                 notes = notes + "; " + profile_note
             self.scans.complete(
@@ -325,6 +399,17 @@ class ScanService:
                     conn, scan_id=scan_id, object_name=object_name, schema=schema.to_dict()
                 )
             if self.audit is not None:
+                if columnar_available:
+                    deferred = ["pattern_break", "rare_combination", "duplicate_name", "missing_children"]
+                    if not ran_streamed_stats:
+                        deferred = ["numeric_outlier", "robust_outlier"] + deferred
+                    if not used_sampled_ml:
+                        deferred = deferred + ["ml_anomaly"]
+                else:
+                    deferred = [
+                        "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
+                        "missing_children", "pattern_break", "ml_anomaly",
+                    ]
                 self.audit.append(
                     conn,
                     event="scan_streamed",
@@ -335,10 +420,7 @@ class ScanService:
                         "row_count": total_records,
                         "batches": batches,
                         "finding_count": total_findings,
-                        "deferred": [
-                            "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
-                            "missing_children", "pattern_break", "ml_anomaly",
-                        ],
+                        "deferred": deferred,
                         "checkpointed": True,
                     },
                 )
