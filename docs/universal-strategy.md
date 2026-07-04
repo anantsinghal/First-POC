@@ -117,7 +117,7 @@ code, not from memory:
 | Pattern mining + cohort ML + graph + reconcile | ✅ | association `pattern_break`, cohort-aware Isolation Forest, orphan/missing-children, equivalence-group reconciliation. |
 | Feedback captured as first-class data | ✅ | `feedback` table, suppression across re-scans, acceptance/false-positive metrics, quality score + trend. |
 | Honest coverage, audit, retention, boundary deployment | ✅ | sampled-scan downgrade, audit log, purge, single-tenant in-boundary design. |
-| **Supervised model trained on labels** | ⏳ phase 4 - ranking flywheel v1 (label-driven re-ranking) DONE; trained model still pending real labels | labels now drive re-ranking; a trained model remains correctly deferred until real labels accumulate. |
+| **Supervised model trained on labels** | ✅ phase 56 - training pipeline EXISTS (`LearningService`: cold-start-guarded logistic regression, JSON-persisted, heuristic fallback); still awaiting real label volume to activate in production | `app/services/learning_service.py` + `app/learning/features.py`; ranking uses the model once enough labels accumulate, else falls back to the phase-4 heuristic unchanged. |
 | **Second adapter (database)** | ✅ (SQLite; PostgreSQL = same shape via information_schema, listed next) | the `DataSource` seam proved by SqliteTableSource. |
 | Translator placement | ✅ (moved to adapter) | `schema_from_salesforce_describe` now lives in `app/ingestion/salesforce_schema.py`. |
 

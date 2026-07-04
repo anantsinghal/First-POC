@@ -13,6 +13,7 @@ from ..persistence.repositories import (
     CoverageRepository,
     FeedbackRepository,
     FindingRepository,
+    LearnedModelRepository,
     ScanRepository,
     SyncRepository,
 )
@@ -23,6 +24,7 @@ from ..services.audit_service import AuditService
 from ..services.dashboard_service import DashboardService
 from ..services.drift_service import DriftService
 from ..services.finding_service import FindingService
+from ..services.learning_service import LearningService
 from ..services.metrics_service import MetricsService
 from ..services.orchestrator_service import OrgScanOrchestrator
 from ..services.quality_service import QualityService
@@ -50,6 +52,7 @@ class Container:
     ranking_service: RankingService
     drift_service: DriftService
     orchestrator_service: OrgScanOrchestrator
+    learning_service: LearningService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -65,7 +68,9 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     feedback = FeedbackRepository()
     audit = AuditRepository()
     sync = SyncRepository()
-    ranking_service = RankingService(database=database, feedback=feedback)
+    models = LearnedModelRepository()
+    learning_service = LearningService(database=database, findings=findings, models=models)
+    ranking_service = RankingService(database=database, feedback=feedback, learner=learning_service)
 
     scan_service = ScanService(
         database=database,
@@ -131,6 +136,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         ranking_service=ranking_service,
         drift_service=drift_service,
         orchestrator_service=orchestrator_service,
+        learning_service=learning_service,
     )
 
 

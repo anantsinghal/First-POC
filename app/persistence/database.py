@@ -100,6 +100,11 @@ class Database:
               content_hash TEXT NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0,
               PRIMARY KEY (object_name, record_id)
             );
+            CREATE TABLE IF NOT EXISTS learned_models (
+              id TEXT PRIMARY KEY, scope TEXT NOT NULL, feature_version INTEGER NOT NULL,
+              model_json TEXT NOT NULL, n_labels INTEGER NOT NULL, metrics_json TEXT NOT NULL,
+              trained_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS finding_scan_index ON findings(scan_id);
             CREATE INDEX IF NOT EXISTS finding_status_index ON findings(status);
             """)

@@ -42,7 +42,9 @@ The **same engine** also scans SQL databases (SQLite adapter today; same picklis
 - **Coverage contract** that never overstates: a record-capped scan is reported `partial`/sampled.
 - **Feedback trust loop**: reviewer labels suppress recurring false positives and feed acceptance /
   false-positive **metrics**; feedback-driven ranking sinks repeatedly rejected finding types and
-  lifts confirmed ones; per-object **data-quality score + trend**.
+  lifts confirmed ones; per-object **data-quality score + trend**. A cold-start-guarded supervised
+  model (`/api/learning/train`) upgrades ranking to a real P(accept) once enough labels exist, and
+  falls back to the heuristic unchanged until then.
 - **Org catalog** (persisted schema snapshot), **audit log** (counts only, no record values/secrets),
   **retention/purge** controls, plus per-scan **drift detection** against the previous baseline.
 - A browser dashboard + JSON API.
@@ -69,6 +71,7 @@ The **same engine** also scans SQL databases (SQLite adapter today; same picklis
 `GET /api/scans` · `GET /api/scans/{id}` · `GET /api/scans/{id}/quality` · `GET /api/scans/{id}/drift`
 `GET /api/findings` · `POST /api/findings/{id}/feedback`
 `GET /api/dashboard` · `GET /api/metrics` · `GET /api/audit` · `POST /api/admin/purge`
+`POST /api/learning/train` · `GET /api/learning/status` (supervised ranking model: train + status)
 
 ## Architecture (layered, SOLID; deps point inward)
 ```

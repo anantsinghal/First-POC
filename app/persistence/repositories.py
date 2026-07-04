@@ -377,6 +377,24 @@ class FindingRepository:
         rows = conn.execute("SELECT finding_type, COUNT(*) FROM findings GROUP BY finding_type").fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def labeled_findings(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        """Findings with a resolved human label, deduped to each finding's LATEST label,
+        ordered oldest -> newest by that kept label's created_at (for time-based train/holdout splits).
+        """
+        rows = conn.execute(
+            """SELECT f.*, fb.label AS label, fb.created_at AS label_created_at
+               FROM findings f JOIN feedback fb ON fb.finding_id = f.id
+               WHERE fb.label IN ('real_issue', 'false_positive', 'valid_exception')
+               ORDER BY fb.created_at ASC, fb.rowid ASC"""
+        ).fetchall()
+        by_finding: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = serialise_row(row)
+            if item["id"] in by_finding:
+                del by_finding[item["id"]]
+            by_finding[item["id"]] = item
+        return list(by_finding.values())
+
 
 class FeedbackRepository:
     """Repository for feedback table."""
@@ -521,3 +539,44 @@ class SyncRepository:
             )
             updated += cursor.rowcount
         return updated
+
+
+class LearnedModelRepository:
+    """Repository for learned_models (persisted supervised ranking model snapshots)."""
+
+    def save(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        scope: str,
+        feature_version: int,
+        model: dict[str, Any],
+        n_labels: int,
+        metrics: dict[str, Any],
+    ) -> str:
+        """Insert a new trained model snapshot, return its id."""
+        model_id = str(uuid4())
+        conn.execute(
+            """INSERT INTO learned_models (id, scope, feature_version, model_json, n_labels, metrics_json, trained_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (model_id, scope, feature_version, json.dumps(model), n_labels, json.dumps(metrics), now()),
+        )
+        return model_id
+
+    def get_latest(self, conn: sqlite3.Connection, scope: str = "global") -> dict[str, Any] | None:
+        """Return the newest model for the scope (model/metrics parsed), or None if absent."""
+        row = conn.execute(
+            "SELECT * FROM learned_models WHERE scope=? ORDER BY trained_at DESC, rowid DESC LIMIT 1",
+            (scope,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"],
+            "scope": row["scope"],
+            "feature_version": row["feature_version"],
+            "model": json.loads(row["model_json"]),
+            "n_labels": row["n_labels"],
+            "metrics": json.loads(row["metrics_json"]),
+            "trained_at": row["trained_at"],
+        }
