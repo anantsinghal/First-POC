@@ -55,13 +55,13 @@ scope succeeds.)
 3. Scan planner + tiering (cheap checks first; ML/graph gated) + per-tenant budgets.
 4. [x] Bulk API 2.0 extraction ✅ (mock-tested; live tuning pending real org).
 5. Online/2-pass detectors (streaming quantiles, sampled ML) for bounded memory.
-6. Incremental sync + record-state ledger + reconciliation; org-wide scheduler.
+6. [x] Incremental sync + record-state ledger + reconciliation ✅ (REST source, mock-tested; org-wide scheduler remains v2-live).
 
 Integration path note: the scan service PROFILES large objects out-of-core - the planner
 (`use_columnar_profile`, default >= 100k records) selects staging records to an ephemeral Parquet ->
 `ColumnarProfiler` (DuckDB) -> purge, with identical Profile output (parity-verified). A STREAMING
 source (`CsvSource.iter_batches`) + a bounded-memory PROFILE-ONLY scan (`ScanService.profile_source`,
 endpoint `POST /api/scans/profile`) now stream records straight into Parquet (never fully materialised)
-and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) are now implemented; statistical/pattern/ML remain deferred by design. Plus Bulk API 2.0 extraction + incremental sync (best built against a live org's volumes).
+and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) are now implemented; statistical/pattern/ML remain deferred by design.
 
 The invariant to protect through all of this: **detection logic stays generic and metadata-driven; only the data plane (extraction/storage/orchestration) grows.** That keeps the product reusable across every org while it scales.

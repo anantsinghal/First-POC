@@ -32,6 +32,7 @@ class SalesforceObjectSource(DataSource):
         client: SalesforceClient,
         session: SalesforceSession,
         object_name: str,
+        modified_since: str | None = None,
         max_records: int = 500,
         fields: list[str] | None = None,
         resolve_references: bool = True,
@@ -42,6 +43,7 @@ class SalesforceObjectSource(DataSource):
         self.client = client
         self.session = session
         self.object_name = object_name
+        self.modified_since = modified_since
         self.max_records = max_records
         self.fields = fields
         self.resolve_references = resolve_references
@@ -77,10 +79,10 @@ class SalesforceObjectSource(DataSource):
         if len(fields) > MAX_QUERY_FIELDS:
             # POC cap: keep Id plus the first describe-ordered fields to avoid overly wide SOQL.
             fields = fields[:MAX_QUERY_FIELDS]
-        records = await self.client.query_records(
-            f"SELECT {', '.join(fields)} FROM {self.object_name}",
-            max_records=self.max_records,
-        )
+        soql = f"SELECT {', '.join(fields)} FROM {self.object_name}"
+        if self.modified_since is not None:
+            soql = soql + f" WHERE SystemModstamp >= {self.modified_since}"
+        records = await self.client.query_records(soql, max_records=self.max_records)
         cleaned: list[Record] = [
             {f: clean(str(r[f])) if r.get(f) is not None else "" for f in fields}
             for r in records

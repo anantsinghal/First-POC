@@ -14,6 +14,7 @@ from ..persistence.repositories import (
     FeedbackRepository,
     FindingRepository,
     ScanRepository,
+    SyncRepository,
 )
 from ..planning.planner import ScanPlanner
 from ..policy.field_policy import DEFAULT_POLICY
@@ -25,6 +26,7 @@ from ..services.metrics_service import MetricsService
 from ..services.quality_service import QualityService
 from ..services.retention_service import RetentionService
 from ..services.scan_service import ScanService
+from ..services.sync_service import SyncService
 
 
 @dataclass
@@ -41,6 +43,7 @@ class Container:
     retention_service: RetentionService
     metrics_service: MetricsService
     quality_service: QualityService
+    sync_service: SyncService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -55,6 +58,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     findings = FindingRepository()
     feedback = FeedbackRepository()
     audit = AuditRepository()
+    sync = SyncRepository()
 
     scan_service = ScanService(
         database=database,
@@ -89,6 +93,13 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         coverage_repo=coverage_repo,
         findings=findings,
     )
+    sync_service = SyncService(
+        database=database,
+        scan_service=scan_service,
+        sync=sync,
+        findings=findings,
+        audit=audit,
+    )
 
     return Container(
         root=root,
@@ -101,6 +112,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         retention_service=retention_service,
         metrics_service=metrics_service,
         quality_service=quality_service,
+        sync_service=sync_service,
     )
 
 

@@ -327,6 +327,26 @@ class FindingRepository:
         """Update status of a finding."""
         conn.execute("UPDATE findings SET status=? WHERE id=?", (status, finding_id))
 
+    def resolve_for_records(
+        self, conn: sqlite3.Connection, *, object_name: str, record_ids: list[str]
+    ) -> int:
+        """Resolve open/reopened findings for the given records, returning rows updated."""
+        if not record_ids:
+            return 0
+        updated = 0
+        chunk = 900
+        for start in range(0, len(record_ids), chunk):
+            batch = record_ids[start : start + chunk]
+            placeholders = ",".join("?" * len(batch))
+            cursor = conn.execute(
+                f"""UPDATE findings SET status='resolved'
+                    WHERE object_name=? AND record_id IN ({placeholders})
+                    AND status IN ('open','reopened')""",
+                [object_name, *batch],
+            )
+            updated += cursor.rowcount
+        return updated
+
     def status_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
         """Counts of findings grouped by status."""
         rows = conn.execute("SELECT status, COUNT(*) FROM findings GROUP BY status").fetchall()
@@ -412,3 +432,72 @@ class AuditRepository:
             (limit,),
         ).fetchall()
         return [serialise_row(row) for row in rows]
+
+
+class SyncRepository:
+    """Repository for incremental sync state and the record-state ledger."""
+
+    def get_watermark(self, conn: sqlite3.Connection, object_name: str) -> str | None:
+        """Return the last watermark for the object, or None when absent."""
+        row = conn.execute(
+            "SELECT last_watermark FROM sync_state WHERE object_name=?",
+            (object_name,),
+        ).fetchone()
+        return row["last_watermark"] if row else None
+
+    def set_watermark(self, conn: sqlite3.Connection, object_name: str, watermark: str) -> None:
+        """Upsert the object's watermark and refresh updated_at to now()."""
+        conn.execute(
+            """INSERT OR REPLACE INTO sync_state (object_name, last_watermark, updated_at)
+               VALUES (?, ?, ?)""",
+            (object_name, watermark, now()),
+        )
+
+    def ledger_upsert_many(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        object_name: str,
+        entries: list[tuple[str, str]],
+        seen_at: str,
+    ) -> None:
+        """Upsert ledger rows for the records seen in this sync window."""
+        if not entries:
+            return
+        conn.executemany(
+            """INSERT INTO record_ledger (
+                   object_name, record_id, first_seen_at, last_seen_at, content_hash, is_deleted
+               ) VALUES (?, ?, ?, ?, ?, 0)
+               ON CONFLICT(object_name, record_id) DO UPDATE SET
+                   last_seen_at=excluded.last_seen_at,
+                   content_hash=excluded.content_hash,
+                   is_deleted=0""",
+            [(object_name, record_id, seen_at, seen_at, content_hash) for record_id, content_hash in entries],
+        )
+
+    def ledger_active_ids(self, conn: sqlite3.Connection, object_name: str) -> set[str]:
+        """Return active record ids for the object."""
+        rows = conn.execute(
+            "SELECT record_id FROM record_ledger WHERE object_name=? AND is_deleted=0",
+            (object_name,),
+        ).fetchall()
+        return {row["record_id"] for row in rows}
+
+    def ledger_mark_deleted(
+        self, conn: sqlite3.Connection, object_name: str, record_ids: list[str]
+    ) -> int:
+        """Mark the supplied record ids deleted in chunks, returning rows updated."""
+        if not record_ids:
+            return 0
+        updated = 0
+        chunk = 900
+        for start in range(0, len(record_ids), chunk):
+            batch = record_ids[start : start + chunk]
+            placeholders = ",".join("?" * len(batch))
+            cursor = conn.execute(
+                f"""UPDATE record_ledger SET is_deleted=1
+                    WHERE object_name=? AND is_deleted=0 AND record_id IN ({placeholders})""",
+                [object_name, *batch],
+            )
+            updated += cursor.rowcount
+        return updated

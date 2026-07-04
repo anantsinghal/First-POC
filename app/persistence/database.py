@@ -91,6 +91,15 @@ class Database:
               scan_id TEXT PRIMARY KEY REFERENCES scan_manifests(id),
               observed_records INTEGER NOT NULL, flagged_records INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS sync_state (
+              object_name TEXT PRIMARY KEY, last_watermark TEXT NOT NULL, updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS record_ledger (
+              object_name TEXT NOT NULL, record_id TEXT NOT NULL,
+              first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+              content_hash TEXT NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0,
+              PRIMARY KEY (object_name, record_id)
+            );
             CREATE INDEX IF NOT EXISTS finding_scan_index ON findings(scan_id);
             CREATE INDEX IF NOT EXISTS finding_status_index ON findings(status);
             """)

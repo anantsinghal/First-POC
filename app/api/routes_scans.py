@@ -182,6 +182,50 @@ async def scan_salesforce(
         raise HTTPException(502 if exc.status_code else 409, str(exc)) from exc
 
 
+@router.post("/api/scans/salesforce/incremental")
+async def scan_salesforce_incremental(
+    input: SalesforceScanInput, container: Container = Depends(get_container)
+) -> dict[str, Any]:
+    if not SAFE_API_NAME.fullmatch(input.object_name):
+        raise HTTPException(400, "Invalid Salesforce object API name")
+    try:
+        session = await session_from_environment()
+        client = SalesforceClient(session)
+        source = SalesforceObjectSource(
+            client=client,
+            session=session,
+            object_name=input.object_name,
+            max_records=input.max_records,
+        )
+        return await container.sync_service.incremental_scan(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    except SalesforceError as exc:
+        raise HTTPException(502 if exc.status_code else 409, str(exc)) from exc
+
+
+@router.post("/api/scans/salesforce/reconcile")
+async def scan_salesforce_reconcile(
+    input: SalesforceScanInput, container: Container = Depends(get_container)
+) -> dict[str, Any]:
+    if not SAFE_API_NAME.fullmatch(input.object_name):
+        raise HTTPException(400, "Invalid Salesforce object API name")
+    try:
+        session = await session_from_environment()
+        client = SalesforceClient(session)
+        source = SalesforceObjectSource(
+            client=client,
+            session=session,
+            object_name=input.object_name,
+            max_records=input.max_records,
+        )
+        return await container.sync_service.reconcile(source)
+    except IngestionError as e:
+        raise HTTPException(e.status_code, str(e)) from e
+    except SalesforceError as exc:
+        raise HTTPException(502 if exc.status_code else 409, str(exc)) from exc
+
+
 @router.post("/api/scans/salesforce/bulk")
 async def scan_salesforce_bulk(
     input: BulkScanInput, container: Container = Depends(get_container)
