@@ -269,3 +269,11 @@ def get_scan_quality(scan_id: str, container: Container = Depends(get_container)
         return container.quality_service.for_scan(scan_id)
     except NotFoundError as e:
         raise HTTPException(404, str(e)) from e
+
+
+@router.get("/api/scans/{scan_id}/drift")
+def get_scan_drift(scan_id: str, container: Container = Depends(get_container)) -> dict[str, Any]:
+    try:
+        return container.drift_service.compare(scan_id)
+    except NotFoundError as e:
+        raise HTTPException(404, str(e)) from e

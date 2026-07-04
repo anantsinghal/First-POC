@@ -41,9 +41,10 @@ The **same engine** also scans SQL databases (SQLite adapter today; same picklis
   acknowledged / suppressed); idempotent re-scans (set-based bulk upsert).
 - **Coverage contract** that never overstates: a record-capped scan is reported `partial`/sampled.
 - **Feedback trust loop**: reviewer labels suppress recurring false positives and feed acceptance /
-  false-positive **metrics**; per-object **data-quality score + trend**.
+  false-positive **metrics**; feedback-driven ranking sinks repeatedly rejected finding types and
+  lifts confirmed ones; per-object **data-quality score + trend**.
 - **Org catalog** (persisted schema snapshot), **audit log** (counts only, no record values/secrets),
-  **retention/purge** controls.
+  **retention/purge** controls, plus per-scan **drift detection** against the previous baseline.
 - A browser dashboard + JSON API.
 
 ## Scale & security posture
@@ -63,7 +64,7 @@ The **same engine** also scans SQL databases (SQLite adapter today; same picklis
 `POST /api/scans/database/stream` (tier-0 streaming detection) · `POST /api/scans/database?table_name=` ·
 `POST /api/scans/salesforce` · `POST /api/scans/salesforce/incremental` ·
 `POST /api/scans/salesforce/reconcile` · `POST /api/scans/salesforce/bulk` · `POST /api/salesforce/verify`
-`GET /api/scans` · `GET /api/scans/{id}` · `GET /api/scans/{id}/quality`
+`GET /api/scans` · `GET /api/scans/{id}` · `GET /api/scans/{id}/quality` · `GET /api/scans/{id}/drift`
 `GET /api/findings` · `POST /api/findings/{id}/feedback`
 `GET /api/dashboard` · `GET /api/metrics` · `GET /api/audit` · `POST /api/admin/purge`
 

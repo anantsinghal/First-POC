@@ -21,9 +21,11 @@ from ..policy.field_policy import DEFAULT_POLICY
 from ..profiling.profiler import Profiler
 from ..services.audit_service import AuditService
 from ..services.dashboard_service import DashboardService
+from ..services.drift_service import DriftService
 from ..services.finding_service import FindingService
 from ..services.metrics_service import MetricsService
 from ..services.quality_service import QualityService
+from ..services.ranking_service import RankingService
 from ..services.retention_service import RetentionService
 from ..services.scan_service import ScanService
 from ..services.sync_service import SyncService
@@ -44,6 +46,8 @@ class Container:
     metrics_service: MetricsService
     quality_service: QualityService
     sync_service: SyncService
+    ranking_service: RankingService
+    drift_service: DriftService
 
 
 def build_container(*, data_dir: Path, root: Path) -> Container:
@@ -59,6 +63,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     feedback = FeedbackRepository()
     audit = AuditRepository()
     sync = SyncRepository()
+    ranking_service = RankingService(database=database, feedback=feedback)
 
     scan_service = ScanService(
         database=database,
@@ -77,6 +82,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         findings=findings,
         feedback=feedback,
         audit=audit,
+        ranker=ranking_service,
     )
     dashboard_service = DashboardService(
         database=database,
@@ -86,7 +92,12 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
     )
     audit_service = AuditService(database=database, audit=audit)
     retention_service = RetentionService(database=database, scans=scans, audit=audit)
-    metrics_service = MetricsService(database=database, findings=findings, feedback=feedback)
+    metrics_service = MetricsService(
+        database=database,
+        findings=findings,
+        feedback=feedback,
+        ranker=ranking_service,
+    )
     quality_service = QualityService(
         database=database,
         scans=scans,
@@ -100,6 +111,7 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         findings=findings,
         audit=audit,
     )
+    drift_service = DriftService(database=database, scans=scans, audit=audit)
 
     return Container(
         root=root,
@@ -113,6 +125,8 @@ def build_container(*, data_dir: Path, root: Path) -> Container:
         metrics_service=metrics_service,
         quality_service=quality_service,
         sync_service=sync_service,
+        ranking_service=ranking_service,
+        drift_service=drift_service,
     )
 
 

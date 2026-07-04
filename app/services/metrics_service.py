@@ -4,6 +4,7 @@ from typing import Any
 
 from ..persistence.database import Database
 from ..persistence.repositories import FeedbackRepository, FindingRepository
+from .ranking_service import RankingService
 
 
 class MetricsService:
@@ -13,11 +14,19 @@ class MetricsService:
     false-positive rate should fall and the acceptance rate should rise over time.
     """
 
-    def __init__(self, *, database: Database, findings: FindingRepository, feedback: FeedbackRepository) -> None:
+    def __init__(
+        self,
+        *,
+        database: Database,
+        findings: FindingRepository,
+        feedback: FeedbackRepository,
+        ranker: RankingService,
+    ) -> None:
         """Store injected deps."""
         self.database = database
         self.findings = findings
         self.feedback = feedback
+        self.ranker = ranker
 
     def overview(self) -> dict[str, Any]:
         """Return aggregate counts + acceptance / false-positive rates."""
@@ -49,4 +58,5 @@ class MetricsService:
             "by_label": by_label,
             "acceptance_rate": acceptance_rate,
             "false_positive_rate": false_positive_rate,
+            "type_acceptance": self.ranker.type_acceptance(),
         }

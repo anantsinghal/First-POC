@@ -4,6 +4,7 @@ from ..persistence.database import Database
 from ..persistence.repositories import AuditRepository, FeedbackRepository, FindingRepository
 
 from .errors import NotFoundError
+from .ranking_service import RankingService
 
 
 class FindingService:
@@ -16,12 +17,14 @@ class FindingService:
         findings: FindingRepository,
         feedback: FeedbackRepository,
         audit: AuditRepository | None = None,
+        ranker: RankingService | None = None,
     ) -> None:
         """Store injected dependencies."""
         self.database = database
         self.findings = findings
         self.feedback = feedback
         self.audit = audit
+        self.ranker = ranker
 
     def list_findings(self, scan_id: str | None = None, status: str | None = None) -> list[dict]:
         """List findings, attaching feedback list for each (matches baseline list_findings behavior)."""
@@ -29,6 +32,8 @@ class FindingService:
             rows = self.findings.list(conn, scan_id=scan_id, status=status)
             for row in rows:
                 row["feedback"] = self.feedback.list_for_finding(conn, row["id"])
+            if self.ranker is not None:
+                return self.ranker.rank(rows)
             return rows
 
     def add_feedback(self, finding_id: str, label: str, note: str, reviewer: str) -> dict:

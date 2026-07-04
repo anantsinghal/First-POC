@@ -404,6 +404,19 @@ class FeedbackRepository:
         rows = conn.execute("SELECT label, COUNT(*) FROM feedback GROUP BY label").fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def label_counts_by_type(self, conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
+        """Counts of feedback grouped by finding type and label."""
+        rows = conn.execute(
+            """SELECT f.finding_type, fb.label, COUNT(*)
+               FROM feedback fb
+               JOIN findings f ON f.id = fb.finding_id
+               GROUP BY f.finding_type, fb.label"""
+        ).fetchall()
+        counts: dict[str, dict[str, int]] = {}
+        for row in rows:
+            counts.setdefault(row[0], {})[row[1]] = row[2]
+        return counts
+
 
 class AuditRepository:
     """Repository for append-only audit_log. All methods take an open Connection as first arg."""
