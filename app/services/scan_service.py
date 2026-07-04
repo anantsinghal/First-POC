@@ -139,9 +139,13 @@ class ScanService:
         """Bounded-memory DETECTING scan using iter_batches or aiter_batches when available.
 
         Runs only tier-0 detectors per batch (plus orphan_reference when related_ids present).
-        Uses a single DB connection for the entire write path. Tees record batches to ephemeral
-        Parquet (if scale deps) for columnar profile; otherwise empty profile + note. Falls back
-        to run_scan when no iter/aiter_batches. Share per-batch via inner fn. All existing tests unaffected.
+        Uses a single DB connection for the entire write path. The manifest is inserted immediately
+        with row_count=0 and row_count is finalized only at completion. Findings from each completed
+        batch are checkpointed with an explicit commit, so a crash mid-scan leaves the manifest in
+        'running' status and preserves findings from earlier completed batches. Tees record batches
+        to ephemeral Parquet (if scale deps) for columnar profile; otherwise empty profile + note.
+        Falls back to run_scan when no iter/aiter_batches. Share per-batch via inner fn. All existing
+        tests unaffected.
         """
         self.database.setup()
         scan_id = str(uuid4())
@@ -182,6 +186,7 @@ class ScanService:
         )
         schema = getattr(source, "schema", None)
         related_ids = getattr(source, "related_ids", None) or {}
+        source_hash = stable_hash({"object": object_name, "fields": fields, "mode": "streamed"})
 
         # Tier-0 include set (from planner constant) + orphan_reference opportunistically
         tier0 = frozenset(d for d, t in DETECTOR_TIERS.items() if t == 0)
@@ -192,90 +197,6 @@ class ScanService:
         total_findings = 0
         batches = 0
         flagged: set[str] = set()
-        collected_candidates: list = []
-
-        def _process_batch(b: list[Record]) -> list[Record]:
-            """Shared per-batch body (detection + accumulators). Used by both sync/async paths."""
-            nonlocal total_records, total_findings, batches
-            batches += 1
-            ctx = DetectionContext(
-                object_name, b, fields, self.policy, None,
-                schema=schema, related_ids=related_ids or {},
-            )
-            cands = self.registry.detect(ctx, include=tier0)
-            total_findings += len(cands)
-            collected_candidates.extend(cands)
-            for c in cands:
-                if c.record_id:
-                    flagged.add(c.record_id)
-            total_records += len(b)
-            return b
-
-        # Columnar profile via tee if available; detection side-effects happen during consumption
-        if self._columnar_available():
-            import os
-            import tempfile
-
-            from ..profiling.columnar_profiler import ColumnarProfiler
-            from ..staging.parquet_store import write_record_batches
-
-            staging_dir = tempfile.mkdtemp(prefix="scan_stream_")
-            path = os.path.join(staging_dir, "records.parquet")
-            try:
-                cols = fields or list(getattr(source, "fieldnames", []))
-                if cols:
-                    if async_aiter is not None:
-                        # async aiter path (e.g. bulk): consume with async for; use list of batches for write (small in practice)
-                        detected_batches: list[list[Record]] = []
-                        if first_batch is not None:
-                            detected_batches.append(_process_batch(first_batch))
-                        if async_aiter:
-                            async for b in async_aiter:
-                                detected_batches.append(_process_batch(b))
-                        write_record_batches(path, detected_batches, cols)
-                        profile = ColumnarProfiler().profile(path, cols)
-                    else:
-                        def detecting_generator():
-                            """Yields batches; side-effect: detect tier-0 per batch and accumulate findings/totals."""
-                            if first_batch is not None:
-                                yield _process_batch(first_batch)
-                            for b in (sync_iter or []):
-                                yield _process_batch(b)
-                        write_record_batches(path, detecting_generator(), cols)
-                        profile = ColumnarProfiler().profile(path, cols)
-                else:
-                    profile = self.profiler.profile([], fields)
-            finally:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
-                try:
-                    os.rmdir(staging_dir)
-                except OSError:
-                    pass
-            profile_note = ""
-        else:
-            # Consume for detection only (no parquet)
-            if async_aiter is not None:
-                if first_batch is not None:
-                    _process_batch(first_batch)
-                if async_aiter:
-                    async for b in async_aiter:
-                        _process_batch(b)
-            else:
-                if first_batch is not None:
-                    _process_batch(first_batch)
-                for b in (sync_iter or []):
-                    _process_batch(b)
-            profile = self.profiler.profile([], fields)
-            profile_note = "profile skipped (scale deps unavailable)"
-
-        source_hash = stable_hash({
-            "object": object_name, "fields": fields, "count": total_records, "mode": "streamed"
-        })
-
-        # Entire write path under ONE connection
         with self.database.connect() as conn:
             self.scans.insert_running(
                 conn,
@@ -283,22 +204,103 @@ class ScanService:
                 source_name=source_name,
                 object_name=object_name,
                 created_at=created,
-                row_count=total_records,
+                row_count=0,
                 source_hash=source_hash,
                 fields=fields,
             )
+            conn.commit()
+
+            def _process_batch(b: list[Record]) -> None:
+                """Shared per-batch body (detection + checkpointed persistence)."""
+                nonlocal total_records, total_findings, batches
+                batches += 1
+                ctx = DetectionContext(
+                    object_name, b, fields, self.policy, None,
+                    schema=schema, related_ids=related_ids or {},
+                )
+                cands = self.registry.detect(ctx, include=tier0)
+                self.findings.upsert_many(
+                    conn,
+                    scan_id=scan_id,
+                    candidates=cands,
+                    source_hash=source_hash,
+                    scan_created_at=created,
+                )
+                conn.commit()
+                total_findings += len(cands)
+                for c in cands:
+                    if c.record_id:
+                        flagged.add(c.record_id)
+                total_records += len(b)
+
+            # Columnar profile via tee if available; detection side-effects happen during consumption
+            if self._columnar_available():
+                import os
+                import tempfile
+
+                from ..profiling.columnar_profiler import ColumnarProfiler
+                from ..staging.parquet_store import BatchParquetWriter
+
+                staging_dir = tempfile.mkdtemp(prefix="scan_stream_")
+                path = os.path.join(staging_dir, "records.parquet")
+                writer = None
+                try:
+                    cols = fields or list(getattr(source, "fieldnames", []))
+                    if cols:
+                        writer = BatchParquetWriter(path, cols)
+                        if async_aiter is not None:
+                            if first_batch is not None:
+                                _process_batch(first_batch)
+                                writer.write(first_batch)
+                            if async_aiter:
+                                async for b in async_aiter:
+                                    _process_batch(b)
+                                    writer.write(b)
+                        else:
+                            if first_batch is not None:
+                                _process_batch(first_batch)
+                                writer.write(first_batch)
+                            for b in (sync_iter or []):
+                                _process_batch(b)
+                                writer.write(b)
+                        writer.close()
+                        writer = None
+                        profile = ColumnarProfiler().profile(path, cols)
+                    else:
+                        profile = self.profiler.profile([], fields)
+                finally:
+                    if writer is not None:
+                        writer.close()
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                    try:
+                        os.rmdir(staging_dir)
+                    except OSError:
+                        pass
+                profile_note = ""
+            else:
+                if async_aiter is not None:
+                    if first_batch is not None:
+                        _process_batch(first_batch)
+                    if async_aiter:
+                        async for b in async_aiter:
+                            _process_batch(b)
+                else:
+                    if first_batch is not None:
+                        _process_batch(first_batch)
+                    for b in (sync_iter or []):
+                        _process_batch(b)
+                profile = self.profiler.profile([], fields)
+                profile_note = "profile skipped (scale deps unavailable)"
+
             coverage = self.grader.grade(
                 object_name, [], fields, record_count=total_records,
                 sampled=getattr(source, "truncated", False),
             )
             self.coverage_repo.insert(conn, scan_id, coverage)
-            self.findings.upsert_many(
-                conn,
-                scan_id=scan_id,
-                candidates=collected_candidates,
-                source_hash=source_hash,
-                scan_created_at=created,
-            )
+            self.scans.set_row_count(conn, scan_id, total_records)
             notes = (
                 f"streamed scan: {total_findings} findings from tier-0 detectors over {batches} batches; "
                 f"statistical/pattern/ML deferred (streaming)"
@@ -337,6 +339,7 @@ class ScanService:
                             "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
                             "missing_children", "pattern_break", "ml_anomaly",
                         ],
+                        "checkpointed": True,
                     },
                 )
         return self.get_scan_detail(scan_id)

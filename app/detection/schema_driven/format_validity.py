@@ -11,16 +11,17 @@ from ..base import Candidate, DetectionContext, make_candidate
 # Module-level compiled heuristics (pragmatic, not RFC-exhaustive)
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 URL_RE = re.compile(r"^https?://[^\s.]+\.[^\s]+$", re.IGNORECASE)
+DOMAIN_RE = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?:/[^\s]*)?$")
 # Root-relative paths (e.g. "/services/images/photo/001...", "/resource/.../pic.png") are a
 # normal, valid value for "url"-typed fields in many systems, incl. Salesforce's own PhotoUrl —
 # resolved relative to the instance/host. Found via real-org testing (2026-07-04): without this,
-# every such value was a false positive.
+# and without accepting common schemeless domains, many normal production values were false positives.
 RELATIVE_PATH_RE = re.compile(r"^/[^\s]+$")
 
 
 def _is_valid_url(value: str) -> bool:
-    """Absolute http(s) URL or a root-relative path (both are valid 'url' field values)."""
-    return bool(URL_RE.match(value) or RELATIVE_PATH_RE.match(value))
+    """Absolute http(s), root-relative paths, or schemeless domains are valid url values."""
+    return bool(URL_RE.match(value) or RELATIVE_PATH_RE.match(value) or DOMAIN_RE.match(value))
 
 
 def _is_valid_phone(value: str) -> bool:

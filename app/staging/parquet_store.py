@@ -19,6 +19,31 @@ def is_available() -> bool:
     return _PYARROW
 
 
+class BatchParquetWriter:
+    """Incrementally write cleaned record batches to a Parquet file."""
+
+    def __init__(self, path: str | Path, columns: list[str]) -> None:
+        if not _PYARROW:
+            raise RuntimeError("pyarrow not installed; install the 'scale' extra")
+        self.path = Path(path)
+        self.columns = columns
+        self._writer = pq.ParquetWriter(self.path, _schema(columns))
+
+    def __enter__(self) -> BatchParquetWriter:
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def write(self, records: list[Record]) -> None:
+        """Write one batch using the all-string staging schema."""
+        self._writer.write_table(_table_from_records(records, self.columns))
+
+    def close(self) -> None:
+        """Close the underlying writer."""
+        self._writer.close()
+
+
 def write_records(path: str | Path, records: list[Record], columns: list[str]) -> None:
     """Write a list of records to a Parquet file with all columns as strings."""
     if not _PYARROW:
@@ -30,27 +55,11 @@ def write_record_batches(
     path: str | Path, batches: Iterable[list[Record]], columns: list[str]
 ) -> int:
     """Write record batches to Parquet incrementally and return the row count."""
-    if not _PYARROW:
-        raise RuntimeError("pyarrow not installed; install the 'scale' extra")
-
-    schema = _schema(columns)
-    writer: pq.ParquetWriter | None = None
     total_rows = 0
-    target = Path(path)
-
-    try:
+    with BatchParquetWriter(path, columns) as writer:
         for batch in batches:
-            table = _table_from_records(batch, columns)
-            if writer is None:
-                writer = pq.ParquetWriter(target, schema)
-            writer.write_table(table)
+            writer.write(batch)
             total_rows += len(batch)
-    finally:
-        if writer is not None:
-            writer.close()
-
-    if writer is None:
-        pq.write_table(_table_from_records([], columns), target)
     return total_rows
 
 

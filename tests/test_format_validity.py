@@ -24,7 +24,7 @@ def test_format_validity_contact_cases():
     )
     records: list[dict[str, str]] = [
         {"Id": "1", "Email": "a@b.com", "Phone": "+1 (415) 555-1234", "Website": "https://x.com"},
-        {"Id": "2", "Email": "not-an-email", "Phone": "12", "Website": "x.com"},
+        {"Id": "2", "Email": "not-an-email", "Phone": "12", "Website": "nope"},
         {"Id": "3", "Email": "", "Phone": "", "Website": ""},  # empties, not flagged
     ]
     fields = ["Id", "Email", "Phone", "Website"]

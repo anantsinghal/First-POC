@@ -46,6 +46,13 @@ class ScanRepository:
             (completed_at, json.dumps(profile), notes, scan_id),
         )
 
+    def set_row_count(self, conn: sqlite3.Connection, scan_id: str, row_count: int) -> None:
+        """Update the manifest row_count once the streaming scan finishes counting rows."""
+        conn.execute(
+            "UPDATE scan_manifests SET row_count=? WHERE id=?",
+            (row_count, scan_id),
+        )
+
     def get(self, conn: sqlite3.Connection, scan_id: str) -> dict[str, Any] | None:
         """Return serialised manifest or None."""
         row = conn.execute("SELECT * FROM scan_manifests WHERE id=?", (scan_id,)).fetchone()
