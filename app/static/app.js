@@ -21,7 +21,7 @@ const humanizeType = (t) => TYPE_LABELS[t] || t.replace(/_/g,' ').replace(/\b\w/
 
 function setMessage(text, failure=false) { const message = $('#message'); message.textContent = text; message.style.color = failure ? 'var(--bad)' : 'var(--good)'; }
 function coverage(scan) { const c = scan?.coverage; if (!c) return $('#coverage').innerHTML = ''; $('#coverage').className = `coverage ${c.grade}`; $('#coverage').innerHTML = `<strong>Coverage: ${c.grade.toUpperCase()}</strong><p>${c.reason}</p><small>${c.observed_records} records · ${c.queried_fields.length} fields · Missing: ${c.missing_fields.join(', ') || 'none'}</small>${c.suppressed_checks.length ? `<p><small>Suppressed checks: ${c.suppressed_checks.join('; ')}</small></p>` : ''}`; }
-function showFindings(findings) { const target = $('#findings'); $('#findingCount').textContent = `${findings.length} finding${findings.length === 1 ? '' : 's'}`; target.innerHTML = ''; if (!findings.length) { $('#findingTypes').innerHTML = ''; return target.innerHTML = '<p>No findings in this scan.</p>'; } const template = $('#findingTemplate'); for (const item of findings) { const node = template.content.cloneNode(true); const badge = $('.badge', node); badge.textContent = item.severity; badge.classList.add(item.severity); $('.type-tag', node).textContent = humanizeType(item.finding_type); $('h3', node).textContent = item.title; const score = $('.score', node); score.textContent = `${Math.round(item.confidence * 100)}% confidence`; if (item.rank_score !== undefined && item.rank_score !== item.priority) { const arrow = item.rank_score < item.priority ? '▼' : '▲'; score.insertAdjacentHTML('beforeend', ` <span class="rank-tag">rank ${Number(item.rank_score).toFixed(2)} ${arrow}</span>`); } $('.record', node).textContent = `${item.object_name} · ${item.record_name} (${item.record_id})`; $('.why', node).textContent = item.evidence.why || 'Review the supplied evidence.'; $('pre', node).textContent = JSON.stringify({ evidence:item.evidence, fingerprint:item.fingerprint, scan_id:item.scan_id, status:item.status }, null, 2); for (const button of node.querySelectorAll('[data-label]')) button.onclick = async () => { try { await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label}) }); setMessage('Review label saved.'); await refresh(); } catch (e) { setMessage(e.message, true); } }; target.append(node); } const counts = {}; for (const f of findings) counts[f.finding_type] = (counts[f.finding_type]||0) + 1; const chips = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([t,c]) => `<span class="type-chip">${humanizeType(t)} ×${c}</span>`).join(''); $('#findingTypes').innerHTML = chips; }
+function showFindings(findings) { const target = $('#findings'); $('#findingCount').textContent = `${findings.length} finding${findings.length === 1 ? '' : 's'}`; target.innerHTML = ''; if (!findings.length) { $('#findingTypes').innerHTML = ''; return target.innerHTML = '<p>No findings in this scan.</p>'; } const template = $('#findingTemplate'); for (const item of findings) { const node = template.content.cloneNode(true); const badge = $('.badge', node); badge.textContent = item.severity; badge.classList.add(item.severity); $('.type-tag', node).textContent = humanizeType(item.finding_type); $('h3', node).textContent = item.title; const score = $('.score', node); score.textContent = `${Math.round(item.confidence * 100)}% confidence`; if (item.rank_score !== undefined && item.rank_score !== item.priority) { const arrow = item.rank_score < item.priority ? '▼' : '▲'; score.insertAdjacentHTML('beforeend', ` <span class="rank-tag">rank ${Number(item.rank_score).toFixed(2)} ${arrow}</span>`); } if (item.ranking_basis === 'model' && typeof item.model_p_accept === 'number') { const modelPct = Math.round(item.model_p_accept * 100); const factors = (item.model_factors || []).map(f => `${f.feature} ${f.contribution >= 0 ? '+' : ''}${Number(f.contribution).toFixed(2)}`).join(', ').replace(/"/g, '&quot;'); score.insertAdjacentHTML('beforeend', ` <span class="model-chip" title="${factors}">model: ${modelPct}% real</span>`); } $('.record', node).textContent = `${item.object_name} · ${item.record_name} (${item.record_id})`; $('.why', node).textContent = item.evidence.why || 'Review the supplied evidence.'; $('pre', node).textContent = JSON.stringify({ evidence:item.evidence, fingerprint:item.fingerprint, scan_id:item.scan_id, status:item.status }, null, 2); for (const button of node.querySelectorAll('[data-label]')) button.onclick = async () => { try { await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label}) }); setMessage('Review label saved.'); await refresh(); } catch (e) { setMessage(e.message, true); } }; target.append(node); } const counts = {}; for (const f of findings) counts[f.finding_type] = (counts[f.finding_type]||0) + 1; const chips = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([t,c]) => `<span class="type-chip">${humanizeType(t)} ×${c}</span>`).join(''); $('#findingTypes').innerHTML = chips; }
 
 function showCatalog(schema) {
   const target = $('#catalog');
@@ -75,6 +75,26 @@ function showMetrics(m) {
     html += acceptanceEntries.map(([t, a]) => chip(`Acc[${humanizeType(t)}]`, `${Math.round((a.acceptance || 0) * 100)}% (${a.labels})`)).join('');
   }
   target.innerHTML = html;
+}
+
+function showLearning(status) {
+  const target = $('#learning');
+  if (!target) return;
+  if (!status) { target.innerHTML = ''; return; }
+  const model = status.model;
+  if (!model) {
+    target.innerHTML =
+      `<p class="learning-line">Ranking mode: heuristic (learned model not active yet).</p>` +
+      `<p class="learning-line">Labels: <strong>${status.n_labels}</strong> (real_issue <strong>${status.n_pos}</strong> · other <strong>${status.n_neg}</strong>)</p>` +
+      `<p class="learning-line">Ready to train: <strong>${status.ready ? 'yes' : 'no'}</strong></p>`;
+    return;
+  }
+  const pct = (x) => typeof x === 'number' ? `${Math.round(x * 100)}%` : '—';
+  const trainedAt = model.trained_at ? new Date(model.trained_at).toLocaleString() : '—';
+  const metrics = model.metrics || {};
+  target.innerHTML =
+    `<p class="learning-line">Ranking mode: <strong>LEARNED MODEL</strong> — trained on ${model.n_labels} labels on ${trainedAt}.</p>` +
+    `<p class="learning-line">Holdout accuracy: <strong>${pct(metrics.accuracy)}</strong> · precision: <strong>${pct(metrics.precision)}</strong> · recall: <strong>${pct(metrics.recall)}</strong> · ROC AUC: <strong>${pct(metrics.roc_auc)}</strong></p>`;
 }
 
 function showQuality(quality) {
@@ -132,6 +152,7 @@ async function refresh() {
   const scans = await api('/api/scans');
   $('#scans').innerHTML = scans.length ? scans.map(s => `<div class="scan"><span>${s.object_name} · ${s.source_name}</span><span>${s.row_count} records · ${new Date(s.created_at).toLocaleString()}</span></div>`).join('') : '<p>No scan manifests yet.</p>';
   try { showMetrics(await api('/api/metrics')); } catch (e) { const t = $('#metrics'); if (t) t.innerHTML = ''; }
+  try { showLearning(await api('/api/learning/status')); } catch (e) { const t = $('#learning'); if (t) t.innerHTML = ''; }
   showCatalog(scan && scan.schema);
   try {
     const audits = await api('/api/audit?limit=20');
@@ -174,6 +195,20 @@ $('#dbUpload').onsubmit = async (event) => {
     setMessage(`Scan completed: ${scan.finding_count} candidate occurrences generated.`);
     await refresh();
   } catch(e) { setMessage(e.message, true); }
+};
+
+$('#trainModel').onclick = async () => {
+  try {
+    setMessage('Training…');
+    const result = await api('/api/learning/train', { method: 'POST' });
+    if (result.trained) {
+      const acc = result.metrics && typeof result.metrics.accuracy === 'number' ? ` (acc ${Math.round(result.metrics.accuracy * 100)}%)` : '';
+      setMessage(`Model trained on ${result.n_labels} labels${acc}.`);
+    } else {
+      setMessage(result.reason || 'Training did not produce a model.', true);
+    }
+    await refresh();
+  } catch (e) { setMessage(e.message, true); }
 };
 
 refresh().catch(e => setMessage(e.message, true));

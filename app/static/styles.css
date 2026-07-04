@@ -10,6 +10,10 @@
 .drift-row { font-size:.82rem; color:var(--muted); border-bottom:1px solid var(--line); padding:4px 0; }
 .drift-row strong { color:var(--warn); font-size:.75rem; text-transform:uppercase; letter-spacing:.05em; }
 .rank-tag { font-size:.68rem; color:var(--warn); white-space:nowrap; }
+.model-chip { font-size:.66rem; color:var(--good); background:#0e2a1c; border:1px solid var(--line); padding:2px 6px; border-radius:999px; white-space:nowrap; }
+#trainModel { font-size:.72rem; padding:6px 10px; }
+.learning-line { font-size:.82rem; color:var(--muted); }
+.learning-line strong { color:var(--ink); }
 .quality-score { font-size:2rem; font-weight:800; letter-spacing:-.04em; }
 .quality-meta { color:var(--muted); margin:.35rem 0 0; }
 @media (max-width:620px) { header{align-items:start;flex-direction:column}.stats{grid-template-columns:1fr}.scan{flex-direction:column;gap:3px} }

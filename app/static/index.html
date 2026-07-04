@@ -13,6 +13,7 @@
     <section class="upload"><strong>Database scan (SQLite)</strong><form id="dbUpload"><label>Table <input name="table_name" value="" placeholder="orders" required></label><label>.db file <input name="file" type="file" accept=".db,.sqlite,.sqlite3" required></label><label class="chk"><input type="checkbox" name="stream"> stream (bounded memory)</label><button>Scan database</button></form><small>The same engine reads the table's schema (NOT NULL, CHECK enums, foreign keys) as its contract.</small></section>
     <section id="stats" class="stats"></section>
     <section class="panel"><h2>Review &amp; trust metrics</h2><div id="metrics" class="metrics-chips"><p>Run a scan to populate metrics.</p></div></section>
+    <section class="panel"><div class="panel-title"><h2>Learned ranking</h2><button id="trainModel" type="button">Train model</button></div><div id="learning"><p>Loading…</p></div></section>
     <section class="panel"><h2>Data quality</h2><div id="quality"><p>Run a scan to populate.</p></div></section>
     <section class="panel"><h2>Drift vs previous scan</h2><div id="drift"><p>Run two scans of the same object to compare.</p></div></section>
     <section id="coverage"></section>
