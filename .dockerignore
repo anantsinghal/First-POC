@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+tests/
+.claude/
+data/scanner.db
+*.log
+.env*

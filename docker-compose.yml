@@ -1,0 +1,22 @@
+services:
+  scanner:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - scanner-data:/data
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      SCANNER_API_KEY: ${SCANNER_API_KEY:-}
+      SF_INSTANCE_URL: ${SF_INSTANCE_URL:-}
+      SF_ACCESS_TOKEN: ${SF_ACCESS_TOKEN:-}
+      SF_LOGIN_URL: ${SF_LOGIN_URL:-}
+      SF_CLIENT_ID: ${SF_CLIENT_ID:-}
+      SF_CLIENT_SECRET: ${SF_CLIENT_SECRET:-}
+      SF_API_VERSION: ${SF_API_VERSION:-}
+    restart: unless-stopped
+
+volumes:
+  scanner-data:

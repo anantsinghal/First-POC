@@ -102,6 +102,14 @@ uvicorn app.main:app --reload    # http://127.0.0.1:8000  (Run demo scan, or upl
 pytest                            # full suite ; pytest tests/test_healthcheck.py for the quick gate
 ```
 
+### Docker (production-style)
+
+\\powershell
+docker compose up -d --build     # http://127.0.0.1:8000
+# Set SCANNER_API_KEY in the environment (or .env) before up — required in production
+\
+Full build/run, backups, retention, upgrades, and SF env vars: [\docs/deployment.md\](docs/deployment.md).
+
 ### Connect a Salesforce org (read-only)
 Set credentials in your shell (never commit them; `.env` is git-ignored):
 - **Production:** `SF_LOGIN_URL` (your My Domain) + `SF_CLIENT_ID` + `SF_CLIENT_SECRET` (Connected App
