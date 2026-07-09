@@ -121,6 +121,7 @@ static UI shell (`/`, `/static`, `/tutorial`) also remains reachable without a k
 ## Status — v1 complete
 
 Accuracy is measured, not asserted: see [`docs/benchmark-results.md`](docs/benchmark-results.md).
+Scale proof + scheduled CLI: `python -m tools.scale_proof` and `python -m tools.scheduled_scan` (see [`docs/scalability.md`](docs/scalability.md) and [`docs/scheduling.md`](docs/scheduling.md)).
 
 In scope and done: metadata-driven detection (reconciled, cohort-aware ML, planner-tiered), CSV /
 multi-object / live-Salesforce / profile-only scans, coverage contract, review + trust metrics +

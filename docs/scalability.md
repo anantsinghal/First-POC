@@ -68,3 +68,28 @@ endpoint `POST /api/scans/profile`) now stream records straight into Parquet (ne
 and profile out-of-core, no findings. Tier-0 streaming/columnar DETECTION passes (per-batch schema/rule checks via /api/scans/database/stream) now extend into a second streamed Parquet pass for exact DuckDB-backed stats plus sampled Isolation Forest scoring, with bounded memory and per-batch finding checkpoints. Pattern mining and some graph checks remain deferred by design.
 
 The invariant to protect through all of this: **detection logic stays generic and metadata-driven; only the data plane (extraction/storage/orchestration) grows.** That keeps the product reusable across every org while it scales.
+
+## Measured proof
+
+Executable scale proof (black-box stream scan over a seeded SQLite deals table with 9 planted
+anomalies at head/middle/tail). Reproduce with:
+
+```powershell
+python -m tools.scale_proof --rows 1000000 --seed 42 --out scale-proof.json
+```
+
+Paste numbers from `scale-proof.json` here after a full 1M-row run:
+
+| metric | value |
+|---|---|
+| rows | *(pending 1M run)* |
+| row_count | |
+| duration_s | |
+| peak_rss_mb | |
+| planted / matched | |
+| finding_count | |
+| batches | |
+
+CI always exercises a 20k-row smoke (`tests/test_scale_proof.py`). The 1M proof is opt-in via
+`RUN_SCALE_PROOF=1`. Scheduling a recurring scan is documented in
+[`docs/scheduling.md`](scheduling.md) (`python -m tools.scheduled_scan …`).
