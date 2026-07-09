@@ -10,16 +10,15 @@ catalog. Supporting a new org, a new custom object, or a new relationship = **in
 write no code**. This is the load-bearing property for "works across all orgs" and it is real today
 (proven on standard + custom objects, and on a never-before-seen `Project__c`).
 
-## 2. Execution scale - HONEST current state
-The pipeline today is **single-object-per-scan, in-memory, and record-capped** (`max_records`, API
-cap 2000). It is **correct on the records it sees**, but it does NOT yet examine millions of records in
-one pass. Specific limits (named, not hidden):
+## 2. Execution scale - HONEST current state (updated 2026-07-09 after the measured 1M proof)
+The streaming path now examines a million records in one pass with bounded memory — MEASURED, see
+"Measured proof" below. Remaining limits (named, not hidden):
 
-| Area | Today | Limit at millions of records |
+| Area | Today | Remaining limit |
 |---|---|---|
-| Extraction | REST/SOQL pagination into a Python list | loads all rows into memory; no Bulk API/streaming |
-| Detection | in-memory passes; IF/pattern/IQR build full matrices | O(N) memory; not chunked/online |
-| Persistence | findings upserted one-by-one | many SQL statements per scan |
+| Extraction | Bulk API 2.0 streaming (mock-tested) + streamed SQLite/CSV | live Bulk tuning pending a real big org |
+| Detection | tier-0 per batch + streamed DuckDB stats + sampled ML, checkpointed | pattern mining + some graph checks still deferred at scale |
+| Persistence | set-based bulk upserts, per-batch checkpoints | SQLite is single-writer |
 | Orchestration | `OrgScanOrchestrator` discovers/sizes/routes objects **sequentially**, budget-aware | parallel scans need PostgreSQL (SQLite is single-writer); deferred until a real org needs it |
 | Orphan resolution | parent-Id existence probe capped (`parent_id_probe_limit`) | may miss orphans beyond the cap |
 
@@ -78,17 +77,17 @@ anomalies at head/middle/tail). Reproduce with:
 python -m tools.scale_proof --rows 1000000 --seed 42 --out scale-proof.json
 ```
 
-Paste numbers from `scale-proof.json` here after a full 1M-row run:
+Measured on 2026-07-09 (Windows laptop, seed 42, machine otherwise idle):
 
 | metric | value |
 |---|---|
-| rows | *(pending 1M run)* |
-| row_count | |
-| duration_s | |
-| peak_rss_mb | |
-| planted / matched | |
-| finding_count | |
-| batches | |
+| rows | 1,000,000 |
+| row_count | 1,000,000 (complete pass, not sampled) |
+| duration_s | **126.7** (~7,900 records/s end-to-end incl. generation-free scan, stats + sampled-ML passes) |
+| peak_rss_mb | **338.6** (bounded — O(batch), not O(N); materialising 1M records would need GBs) |
+| planted / matched | **9 / 9** (picklist, orphan-FK, extreme amounts at head / middle / tail) — missing = 0 |
+| finding_count | 29,567 (9 planted contract/stat hits + statistical/ML candidates: ~2% IF contamination by design) |
+| batches | 200 (5,000-record batches, per-batch finding checkpoints) |
 
 CI always exercises a 20k-row smoke (`tests/test_scale_proof.py`). The 1M proof is opt-in via
 `RUN_SCALE_PROOF=1`. Scheduling a recurring scan is documented in
