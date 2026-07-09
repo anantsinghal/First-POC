@@ -16,4 +16,6 @@
 .learning-line strong { color:var(--ink); }
 .quality-score { font-size:2rem; font-weight:800; letter-spacing:-.04em; }
 .quality-meta { color:var(--muted); margin:.35rem 0 0; }
+.auth-bar { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:color-mix(in srgb,var(--panel) 88%,transparent); border:1px solid var(--line); border-radius:12px; padding:14px 18px; margin:0 0 18px; }
+.auth-bar[hidden] { display:none; }
 @media (max-width:620px) { header{align-items:start;flex-direction:column}.stats{grid-template-columns:1fr}.scan{flex-direction:column;gap:3px} }

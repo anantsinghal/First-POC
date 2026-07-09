@@ -1,5 +1,21 @@
 const $ = (s, root=document) => root.querySelector(s);
-const api = async (url, options = {}) => { const response = await fetch(url, options); if (!response.ok) throw new Error((await response.json().catch(()=>({detail:response.statusText}))).detail); return response.json(); };
+const showAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = false; };
+const hideAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = true; };
+const api = async (url, options = {}) => {
+  const headers = { ...(options.headers || {}) };
+  const key = localStorage.getItem('scanner_api_key');
+  if (key) headers['X-API-Key'] = key;
+  const response = await fetch(url, { ...options, headers });
+  if (response.status === 401) {
+    showAuthBar();
+    const detail = (await response.json().catch(() => ({ detail: response.statusText }))).detail;
+    const err = new Error(detail || 'Missing or invalid API key');
+    err.status = 401;
+    throw err;
+  }
+  if (!response.ok) throw new Error((await response.json().catch(()=>({detail:response.statusText}))).detail);
+  return response.json();
+};
 
 const TYPE_LABELS = {
   missing_required:'Missing required field', invalid_stage:'Invalid stage',
@@ -211,4 +227,21 @@ $('#trainModel').onclick = async () => {
   } catch (e) { setMessage(e.message, true); }
 };
 
-refresh().catch(e => setMessage(e.message, true));
+const saveApiKeyBtn = document.getElementById('saveApiKey');
+if (saveApiKeyBtn) {
+  saveApiKeyBtn.onclick = () => {
+    const input = document.getElementById('apiKeyInput');
+    const val = input ? input.value.trim() : '';
+    if (val) localStorage.setItem('scanner_api_key', val);
+    else localStorage.removeItem('scanner_api_key');
+    hideAuthBar();
+    refresh().catch(e => {
+      if (e && e.status === 401) { showAuthBar(); return; }
+      setMessage(e.message, true);
+    });
+  };
+}
+refresh().catch(e => {
+  if (e && e.status === 401) { showAuthBar(); return; }
+  setMessage(e.message, true);
+});

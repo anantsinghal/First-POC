@@ -111,6 +111,13 @@ Set credentials in your shell (never commit them; `.env` is git-ignored):
 Then `POST /api/salesforce/verify` (token-free report of REST/Describe/Tooling/Metadata access) and
 `POST /api/scans/salesforce`. See [`docs/salesforce-connection.md`](docs/salesforce-connection.md).
 
+### Securing the scanner itself
+Auth is **off by default** (local dev stays friction-free). To lock the API, set
+`SCANNER_API_KEY` in the environment. Clients must send matching `X-API-Key` on data-bearing
+`/api/*` routes. The dashboard prompts once for the key (stored in `localStorage` as
+`scanner_api_key`) when it receives a 401. `/api/health` stays open for liveness probes; the
+static UI shell (`/`, `/static`, `/tutorial`) also remains reachable without a key.
+
 ## Status — v1 complete
 
 In scope and done: metadata-driven detection (reconciled, cohort-aware ML, planner-tiered), CSV /

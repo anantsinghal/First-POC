@@ -8,6 +8,10 @@
 <body>
   <main>
     <header><div><p class="eyebrow">FIRST POC · HUMAN REVIEW REQUIRED</p><h1>Salesforce data quality scanner</h1><p class="subtitle">Coverage-aware findings from a repeatable scan snapshot.</p></div><button id="demo">Run demo scan</button></header>
+    <div id="authBar" class="auth-bar" hidden>
+      <label>API key <input id="apiKeyInput" type="password" autocomplete="off" placeholder="X-API-Key"></label>
+      <button id="saveApiKey" type="button">Save</button>
+    </div>
     <section class="upload"><strong>Scan a CSV export</strong><form id="upload"><label>Object <input name="object_name" value="Opportunity" required></label><label>CSV <input name="file" type="file" accept=".csv" required></label><button>Upload and scan</button></form><p id="message" role="status"></p></section>
     <section class="upload"><strong>Multi-object scan (relationships)</strong><form id="multiUpload"><label>Primary object <input name="primary_object" value="Account" required></label><label>CSV files (named &lt;Object&gt;.csv) <input name="files" type="file" accept=".csv" multiple required></label><button>Upload & scan</button></form><small>Filenames become object API names; the primary plus its related objects enable orphan & missing-children checks.</small></section>
     <section class="upload"><strong>Database scan (SQLite)</strong><form id="dbUpload"><label>Table <input name="table_name" value="" placeholder="orders" required></label><label>.db file <input name="file" type="file" accept=".db,.sqlite,.sqlite3" required></label><label class="chk"><input type="checkbox" name="stream"> stream (bounded memory)</label><button>Scan database</button></form><small>The same engine reads the table's schema (NOT NULL, CHECK enums, foreign keys) as its contract.</small></section>
