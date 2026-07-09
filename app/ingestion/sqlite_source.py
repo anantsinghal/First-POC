@@ -244,6 +244,12 @@ class SqliteTableSource(DataSource):
                 data_type = FieldType.DATE
             else:
                 data_type = FieldType.STRING
+            # Name-based semantic inference for format validation: conservative,
+            # TEXT-affinity columns only (never override NUMBER/DATE/BOOLEAN/ID/etc.).
+            if data_type is FieldType.STRING:
+                inferred = self._infer_format_type_from_column_name(name)
+                if inferred is not None:
+                    data_type = inferred
             required = (notnull == 1 and pk == 0)
             fd = FieldDescriptor(name=name, data_type=data_type, required=required)
             fields[name] = fd
@@ -301,3 +307,23 @@ class SqliteTableSource(DataSource):
             fields["Id"] = FieldDescriptor(name="Id", data_type=FieldType.ID)
 
         return ObjectSchema(object_name=table, fields=fields)
+
+    def _infer_format_type_from_column_name(self, name: str) -> FieldType | None:
+        """Name-based semantic inference for format validation, conservative, TEXT-affinity columns only.
+
+        Splits the column name on underscores and camelCase boundaries, lowercases tokens,
+        and maps only via exact token equality (no substring matching) so names like
+        'airmail' or 'blink' do not match.
+        """
+        # Insert separators at camelCase boundaries, then split on underscores/spaces.
+        s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+        s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
+        tokens = {t.lower() for t in re.split(r"[_\s]+", s) if t}
+
+        if tokens & {"email", "mail"}:
+            return FieldType.EMAIL
+        if tokens & {"phone", "tel", "telephone", "mobile", "fax"}:
+            return FieldType.PHONE
+        if tokens & {"url", "uri", "website", "link", "homepage"}:
+            return FieldType.URL
+        return None

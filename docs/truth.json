@@ -1,0 +1,127 @@
+[
+  {
+    "record_id": "23",
+    "family": "picklist_invalid",
+    "field": "stage"
+  },
+  {
+    "record_id": "86",
+    "family": "picklist_invalid",
+    "field": "stage"
+  },
+  {
+    "record_id": "140",
+    "family": "picklist_invalid",
+    "field": "stage"
+  },
+  {
+    "record_id": "311",
+    "family": "picklist_invalid",
+    "field": "stage"
+  },
+  {
+    "record_id": "410",
+    "family": "picklist_invalid",
+    "field": "stage"
+  },
+  {
+    "record_id": "869",
+    "family": "required_missing",
+    "field": "stage"
+  },
+  {
+    "record_id": "1096",
+    "family": "required_missing",
+    "field": "stage"
+  },
+  {
+    "record_id": "1144",
+    "family": "required_missing",
+    "field": "stage"
+  },
+  {
+    "record_id": "1261",
+    "family": "required_missing",
+    "field": "stage"
+  },
+  {
+    "record_id": "1268",
+    "family": "required_missing",
+    "field": "stage"
+  },
+  {
+    "record_id": "1272",
+    "family": "orphan_reference",
+    "field": "owner_id"
+  },
+  {
+    "record_id": "1327",
+    "family": "orphan_reference",
+    "field": "owner_id"
+  },
+  {
+    "record_id": "1421",
+    "family": "orphan_reference",
+    "field": "owner_id"
+  },
+  {
+    "record_id": "1425",
+    "family": "orphan_reference",
+    "field": "owner_id"
+  },
+  {
+    "record_id": "1469",
+    "family": "orphan_reference",
+    "field": "owner_id"
+  },
+  {
+    "record_id": "1539",
+    "family": "invalid_format",
+    "field": "email"
+  },
+  {
+    "record_id": "1583",
+    "family": "invalid_format",
+    "field": "email"
+  },
+  {
+    "record_id": "1611",
+    "family": "invalid_format",
+    "field": "email"
+  },
+  {
+    "record_id": "1652",
+    "family": "invalid_format",
+    "field": "website"
+  },
+  {
+    "record_id": "1753",
+    "family": "invalid_format",
+    "field": "website"
+  },
+  {
+    "record_id": "1777",
+    "family": "stat_outlier",
+    "field": "amount"
+  },
+  {
+    "record_id": "1814",
+    "family": "stat_outlier",
+    "field": "amount"
+  },
+  {
+    "record_id": "1838",
+    "family": "stat_outlier",
+    "field": "amount"
+  },
+  {
+    "record_id": "1859",
+    "family": "stat_outlier",
+    "field": "amount"
+  },
+  {
+    "record_id": "1984",
+    "family": "stat_outlier",
+    "field": "amount"
+  }
+]

@@ -120,6 +120,8 @@ static UI shell (`/`, `/static`, `/tutorial`) also remains reachable without a k
 
 ## Status — v1 complete
 
+Accuracy is measured, not asserted: see [`docs/benchmark-results.md`](docs/benchmark-results.md).
+
 In scope and done: metadata-driven detection (reconciled, cohort-aware ML, planner-tiered), CSV /
 multi-object / live-Salesforce / profile-only scans, coverage contract, review + trust metrics +
 quality score, Org catalog, audit log, retention, out-of-core columnar profiling + streaming profile,

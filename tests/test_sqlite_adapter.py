@@ -153,3 +153,31 @@ def test_sqlite_truncation_honesty(sqlite_db: Path, tmp_path: Path):
     scan, _ = harness.run_scan(ds, tmp_path)
     assert scan["coverage"]["grade"] == "partial"
     assert any("record cap" in s for s in scan["coverage"].get("suppressed_checks", []))
+
+
+def test_sqlite_name_based_format_type_inference(tmp_path: Path):
+    """TEXT columns get EMAIL/PHONE/URL from exact name tokens; non-TEXT stays affinity-typed."""
+    db_path = tmp_path / "format_types.db"
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE contacts ("
+            "email TEXT, "
+            "contact_phone TEXT, "
+            "website TEXT, "
+            "note TEXT, "
+            "mail_count INTEGER"
+            ")"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    src = SqliteTableSource(db_path=db_path, table_name="contacts")
+    ds = asyncio.run(src.load())
+    assert ds.schema is not None
+    assert ds.schema.fields["email"].data_type == "email"
+    assert ds.schema.fields["contact_phone"].data_type == "phone"
+    assert ds.schema.fields["website"].data_type == "url"
+    assert ds.schema.fields["note"].data_type == "string"
+    assert ds.schema.fields["mail_count"].data_type == "number"
