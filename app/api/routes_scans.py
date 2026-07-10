@@ -19,6 +19,7 @@ from app.salesforce import SAFE_API_NAME, SalesforceClient, SalesforceError, ses
 from app.services.errors import NotFoundError
 
 from .container import Container, get_container
+from .offload import run_offloaded
 from .schemas import BulkScanInput, OrgScanInput, SalesforceScanInput
 
 router = APIRouter()
@@ -33,7 +34,7 @@ async def run_demo_scan(container: Container = Depends(get_container)) -> dict[s
         object_name="Opportunity",
         source_name=container.demo_file.name,
     )
-    return await container.scan_service.run_scan(source)
+    return await run_offloaded(lambda: container.scan_service.run_scan(source))
 
 
 @router.post("/api/scans/upload")
@@ -51,7 +52,7 @@ async def upload_scan(
         raw_bytes=raw, object_name=object_name, source_name=file.filename or "upload.csv"
     )
     try:
-        return await container.scan_service.run_scan(source)
+        return await run_offloaded(lambda: container.scan_service.run_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
 
@@ -72,7 +73,7 @@ async def profile_scan(
         raw_bytes=raw, object_name=object_name, source_name=file.filename or "upload.csv"
     )
     try:
-        return await container.scan_service.profile_source(source)
+        return await run_offloaded(lambda: container.scan_service.profile_source(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
 
@@ -100,7 +101,7 @@ async def multi_scan(
         source_name=f"multi:{primary_object}+{len(collected)-1} related",
     )
     try:
-        return await container.scan_service.run_scan(source)
+        return await run_offloaded(lambda: container.scan_service.run_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
 
@@ -122,7 +123,7 @@ async def database_scan(
         with open(db_path, "wb") as f:
             f.write(raw)
         source = SqliteTableSource(db_path=db_path, table_name=table_name)
-        return await container.scan_service.run_scan(source)
+        return await run_offloaded(lambda: container.scan_service.run_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     finally:
@@ -150,7 +151,7 @@ async def database_stream_scan(
         with open(db_path, "wb") as f:
             f.write(raw)
         source = SqliteTableSource(db_path=db_path, table_name=table_name)
-        return await container.scan_service.stream_scan(source)
+        return await run_offloaded(lambda: container.scan_service.stream_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     finally:
@@ -175,7 +176,7 @@ async def scan_salesforce(
             object_name=input.object_name,
             max_records=input.max_records,
         )
-        return await container.scan_service.run_scan(source)
+        return await run_offloaded(lambda: container.scan_service.run_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     except SalesforceError as exc:
@@ -197,7 +198,7 @@ async def scan_salesforce_incremental(
             object_name=input.object_name,
             max_records=input.max_records,
         )
-        return await container.sync_service.incremental_scan(source)
+        return await run_offloaded(lambda: container.sync_service.incremental_scan(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     except SalesforceError as exc:
@@ -219,7 +220,7 @@ async def scan_salesforce_reconcile(
             object_name=input.object_name,
             max_records=input.max_records,
         )
-        return await container.sync_service.reconcile(source)
+        return await run_offloaded(lambda: container.sync_service.reconcile(source))
     except IngestionError as e:
         raise HTTPException(e.status_code, str(e)) from e
     except SalesforceError as exc:

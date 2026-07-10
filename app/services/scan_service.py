@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import random
 from pathlib import Path
 from uuid import uuid4
@@ -183,6 +184,11 @@ class ScanService:
             sync_iter = source.iter_batches()
             first_batch = next(sync_iter, None)
 
+        # Bulk/org sources (aiter_batches) hold real awaits and are never wrapped by run_offloaded
+        # (see app/api/routes_scans.py), so their per-batch CPU work is offloaded here instead to
+        # keep the request-handling event loop live.
+        is_async_source = async_aiter is not None
+
         fields: list[str] = list(
             getattr(source, "fieldnames", None)
             or (list(first_batch[0].keys()) if first_batch else [])
@@ -248,6 +254,22 @@ class ScanService:
                     if c.record_id:
                         flagged.add(c.record_id)
 
+            def _persist_batch(candidate_batch: list) -> None:
+                """Shared per-iteration body for the pass-2 streamed-stats/ML loops (checkpointed persistence)."""
+                nonlocal total_findings
+                self.findings.upsert_many(
+                    conn,
+                    scan_id=scan_id,
+                    candidates=candidate_batch,
+                    source_hash=source_hash,
+                    scan_created_at=created,
+                )
+                conn.commit()
+                total_findings += len(candidate_batch)
+                for candidate in candidate_batch:
+                    if candidate.record_id:
+                        flagged.add(candidate.record_id)
+
             # Columnar profile via tee if available; detection side-effects happen during consumption
             if columnar_available:
                 import os
@@ -266,13 +288,13 @@ class ScanService:
                     cols = fields or list(getattr(source, "fieldnames", []))
                     if cols:
                         writer = BatchParquetWriter(path, cols)
-                        if async_aiter is not None:
+                        if is_async_source:
                             if first_batch is not None:
-                                _process_batch(first_batch)
+                                await asyncio.to_thread(_process_batch, first_batch)
                                 writer.write(first_batch)
                             if async_aiter:
                                 async for b in async_aiter:
-                                    _process_batch(b)
+                                    await asyncio.to_thread(_process_batch, b)
                                     writer.write(b)
                         else:
                             if first_batch is not None:
@@ -295,18 +317,10 @@ class ScanService:
                                 object_name=object_name,
                                 policy=self.policy,
                             ):
-                                self.findings.upsert_many(
-                                    conn,
-                                    scan_id=scan_id,
-                                    candidates=candidate_batch,
-                                    source_hash=source_hash,
-                                    scan_created_at=created,
-                                )
-                                conn.commit()
-                                total_findings += len(candidate_batch)
-                                for candidate in candidate_batch:
-                                    if candidate.record_id:
-                                        flagged.add(candidate.record_id)
+                                if is_async_source:
+                                    await asyncio.to_thread(_persist_batch, candidate_batch)
+                                else:
+                                    _persist_batch(candidate_batch)
                         forest = StreamingIsolationForest()
                         ml_fit_skipped = not forest.fit(sample_records, cols)
                         if not ml_fit_skipped:
@@ -318,18 +332,10 @@ class ScanService:
                                 object_name=object_name,
                                 policy=self.policy,
                             ):
-                                self.findings.upsert_many(
-                                    conn,
-                                    scan_id=scan_id,
-                                    candidates=candidate_batch,
-                                    source_hash=source_hash,
-                                    scan_created_at=created,
-                                )
-                                conn.commit()
-                                total_findings += len(candidate_batch)
-                                for candidate in candidate_batch:
-                                    if candidate.record_id:
-                                        flagged.add(candidate.record_id)
+                                if is_async_source:
+                                    await asyncio.to_thread(_persist_batch, candidate_batch)
+                                else:
+                                    _persist_batch(candidate_batch)
                     else:
                         profile = self.profiler.profile([], fields)
                         ml_fit_skipped = True
@@ -348,12 +354,12 @@ class ScanService:
             else:
                 used_sampled_ml = False
                 ml_fit_skipped = True
-                if async_aiter is not None:
+                if is_async_source:
                     if first_batch is not None:
-                        _process_batch(first_batch)
+                        await asyncio.to_thread(_process_batch, first_batch)
                     if async_aiter:
                         async for b in async_aiter:
-                            _process_batch(b)
+                            await asyncio.to_thread(_process_batch, b)
                 else:
                     if first_batch is not None:
                         _process_batch(first_batch)

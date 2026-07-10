@@ -40,10 +40,20 @@ class Database:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        """Context manager: mkdir parents, connect, row_factory=Row, yield, commit, close."""
+        """Context manager: mkdir parents, connect, enable WAL + busy_timeout, row_factory=Row, yield, commit, close.
+
+        WAL enables concurrent readers during writer checkpoints; busy_timeout replaces instant
+        'database is locked' errors with a bounded (5s) wait. check_same_thread=False is required
+        because scan work is offloaded to worker threads (see app/api/offload.py) that reuse this
+        same connection object; callers remain responsible for not touching it concurrently from
+        two threads at once (all offloaded calls are awaited sequentially).
+        """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, check_same_thread=False)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.execute("PRAGMA synchronous=NORMAL")
         try:
             yield connection
             connection.commit()
