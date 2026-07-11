@@ -1,6 +1,24 @@
 const $ = (s, root=document) => root.querySelector(s);
 const showAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = false; };
 const hideAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = true; };
+
+function showReviewerTag() {
+  const tag = document.getElementById('reviewerTag');
+  if (!tag) return;
+  const name = localStorage.getItem('scanner_reviewer');
+  tag.textContent = name ? `reviewing as ${name}` : '';
+}
+
+function getReviewer() {
+  let name = (localStorage.getItem('scanner_reviewer') || '').trim();
+  if (!name) {
+    name = (prompt('Enter your display name for review labels:') || '').trim() || 'anonymous';
+    localStorage.setItem('scanner_reviewer', name);
+  }
+  showReviewerTag();
+  return name;
+}
+
 const apiRaw = async (url, options = {}) => {
   const headers = { ...(options.headers || {}) };
   const key = localStorage.getItem('scanner_api_key');
@@ -70,7 +88,8 @@ function renderFindingCard(item) {
   for (const button of node.querySelectorAll('[data-label]')) {
     button.onclick = async () => {
       try {
-        await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label}) });
+        const reviewer = getReviewer();
+        await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label, reviewer}) });
         setMessage('Review label saved.');
         await refresh();
       } catch (e) { setMessage(e.message, true); }
@@ -339,6 +358,7 @@ if (saveApiKeyBtn) {
     });
   };
 }
+showReviewerTag();
 refresh().catch(e => {
   if (e && e.status === 401) { showAuthBar(); return; }
   setMessage(e.message, true);

@@ -89,7 +89,10 @@ class SalesforceObjectSource(DataSource):
         soql = f"SELECT {', '.join(fields)} FROM {self.object_name}"
         if self.modified_since is not None:
             soql = soql + f" WHERE SystemModstamp >= {self.modified_since}"
-        records = await self.client.query_records(soql, max_records=self.max_records)
+        # Fetch cap+1 so an object with EXACTLY max_records is not falsely marked sampled.
+        records = await self.client.query_records(soql, max_records=self.max_records + 1)
+        truncated = len(records) > self.max_records
+        records = records[: self.max_records]
         cleaned: list[Record] = [
             {f: clean(str(r[f])) if r.get(f) is not None else "" for f in fields}
             for r in records
@@ -140,6 +143,6 @@ class SalesforceObjectSource(DataSource):
             source_hash=source_hash,
             schema=schema,
             related_ids=related_ids or None,
-            # If we filled exactly to the cap, the object likely has more records than we scanned.
-            truncated=len(cleaned) >= self.max_records,
+            # True only when more than max_records rows existed (proved by the +1 fetch).
+            truncated=truncated,
         )

@@ -35,6 +35,7 @@ class MetricsService:
             by_severity = self.findings.severity_counts(conn)
             by_type = self.findings.type_counts(conn)
             by_label = self.feedback.label_counts(conn)
+            labels_by_reviewer = self.feedback.reviewer_counts(conn)
 
         findings_total = sum(by_status.values())
         open_findings = by_status.get("open", 0) + by_status.get("reopened", 0)
@@ -56,6 +57,7 @@ class MetricsService:
             "by_type": by_type,
             "feedback_total": feedback_total,
             "by_label": by_label,
+            "labels_by_reviewer": labels_by_reviewer,
             "acceptance_rate": acceptance_rate,
             "false_positive_rate": false_positive_rate,
             "type_acceptance": self.ranker.type_acceptance(),

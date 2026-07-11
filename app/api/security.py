@@ -17,10 +17,16 @@ from fastapi import HTTPException, Request
 
 
 def api_key_guard(request: Request) -> None:
-    """Reject requests when SCANNER_API_KEY is set and X-API-Key does not match."""
+    """Reject requests when SCANNER_API_KEY is set and X-API-Key does not match.
+
+    On mismatch, sets request.state.auth_failed=True so middleware can append an
+    auth_failed audit row (never logs key material). Audit write is NOT done here —
+    no Database/AuditRepository is available in this dependency.
+    """
     expected = os.environ.get("SCANNER_API_KEY")
     if not expected:
         return
     provided = request.headers.get("X-API-Key")
     if provided is None or not hmac.compare_digest(provided, expected):
+        request.state.auth_failed = True
         raise HTTPException(status_code=401, detail="Missing or invalid API key")

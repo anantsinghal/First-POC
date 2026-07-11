@@ -26,8 +26,11 @@ def test_blocked_stays_blocked_even_if_sampled():
     assert cov.grade == CoverageGrade.BLOCKED
 
 
-def test_salesforce_source_marks_truncated_at_cap(tmp_path):
-    """A Salesforce scan that fills exactly to max_records is flagged truncated -> PARTIAL coverage."""
+def test_salesforce_source_exact_max_records_not_truncated(tmp_path):
+    """Exactly max_records rows (no +1) is NOT truncated; coverage stays good (Phase 68 F10 fix).
+
+    Updated from the prior off-by-one assertion (len>=max was falsely 'sampled').
+    """
     describe = {
         "name": "Account",
         "fields": [
@@ -38,7 +41,26 @@ def test_salesforce_source_marks_truncated_at_cap(tmp_path):
     query_records = [{"Id": f"001{i:03d}", "Name": f"A{i}"} for i in range(5)]
     src = harness.salesforce_source("Account", describe=describe, query_records=query_records, max_records=5)
     ds = asyncio.run(src.load())
+    assert ds.truncated is False
+    assert len(ds.records) == 5
+    scan, _ = harness.run_scan(ds, tmp_path)
+    assert scan["coverage"]["grade"] == "good"
+
+
+def test_salesforce_source_max_plus_one_is_truncated(tmp_path):
+    """max_records+1 available rows -> truncated True, coverage partial (record cap)."""
+    describe = {
+        "name": "Account",
+        "fields": [
+            {"name": "Id", "type": "id", "queryable": True, "nillable": False},
+            {"name": "Name", "type": "string", "queryable": True, "nillable": False},
+        ],
+    }
+    query_records = [{"Id": f"001{i:03d}", "Name": f"A{i}"} for i in range(6)]
+    src = harness.salesforce_source("Account", describe=describe, query_records=query_records, max_records=5)
+    ds = asyncio.run(src.load())
     assert ds.truncated is True
+    assert len(ds.records) == 5
     scan, _ = harness.run_scan(ds, tmp_path)
     assert scan["coverage"]["grade"] == "partial"
     assert any("record cap" in s for s in scan["coverage"]["suppressed_checks"])

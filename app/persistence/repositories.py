@@ -468,6 +468,13 @@ class FeedbackRepository:
         rows = conn.execute("SELECT label, COUNT(*) FROM feedback GROUP BY label").fetchall()
         return {row[0]: row[1] for row in rows}
 
+    def reviewer_counts(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Counts of feedback grouped by reviewer (provenance for labels)."""
+        rows = conn.execute(
+            "SELECT reviewer, COUNT(*) FROM feedback GROUP BY reviewer"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
     def label_counts_by_type(self, conn: sqlite3.Connection) -> dict[str, dict[str, int]]:
         """Counts of feedback grouped by finding type and label."""
         rows = conn.execute(
