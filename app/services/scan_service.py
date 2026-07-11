@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import heapq
 import random
 from pathlib import Path
 from uuid import uuid4
@@ -22,6 +23,21 @@ from .streaming_stats import StreamingStatsPass
 from ..detection.ml.isolation_forest import StreamingIsolationForest
 
 from .errors import NotFoundError
+
+
+STREAMED_IQR_MULTIPLIER = 3.0
+"""Far-outlier fence for the streamed numeric_outlier/robust_outlier pass. Wider than the in-memory
+detector's fixed 1.5xIQR (app/detection/statistical/thresholds.IQR_MULTIPLIER) on purpose: at scale
+(millions of rows) a narrow fence flags a routine 0.7% of gaussian data, flooding the review queue,
+so the streamed pass only surfaces genuinely far outliers. The difference is intentional and is
+documented in each streamed finding's evidence 'why'."""
+
+MAX_STREAMED_ML_FINDINGS = 500
+"""Cap on ml_anomaly findings persisted from a single streamed scan. The sampled Isolation Forest
+flags ~2% of all rows by construction; on a multi-million-row object that's tens of thousands of
+low-value candidates. Only the top-K by |anomaly_score| are kept (a small heap, so memory stays
+bounded regardless of how many rows were scored); the scan is honest about the cap in its notes and
+audit detail (ml_flagged_total vs ml_kept)."""
 
 
 class ScanService:
@@ -292,6 +308,8 @@ class ScanService:
                 used_sampled_ml = False
                 ran_streamed_stats = False
                 ml_fit_skipped = True
+                ml_flagged_total = 0
+                ml_kept = 0
                 try:
                     cols = fields or list(getattr(source, "fieldnames", []))
                     if cols:
@@ -324,6 +342,7 @@ class ScanService:
                                 aggs,
                                 object_name=object_name,
                                 policy=self.policy,
+                                iqr_multiplier=STREAMED_IQR_MULTIPLIER,
                             ):
                                 if is_async_source:
                                     await asyncio.to_thread(_persist_batch, candidate_batch)
@@ -333,6 +352,11 @@ class ScanService:
                         ml_fit_skipped = not forest.fit(sample_records, cols)
                         if not ml_fit_skipped:
                             used_sampled_ml = True
+                            # Bounded top-K selection by |anomaly_score|: push every scored candidate
+                            # into a size-capped min-heap (smallest magnitude evicted first), so memory
+                            # never exceeds MAX_STREAMED_ML_FINDINGS regardless of how many rows are
+                            # scored. Persisted once, after the generator is fully drained.
+                            ml_heap: list[tuple[float, int, object]] = []
                             for candidate_batch in stats_pass.score_ml_batches(
                                 path,
                                 cols,
@@ -340,10 +364,18 @@ class ScanService:
                                 object_name=object_name,
                                 policy=self.policy,
                             ):
-                                if is_async_source:
-                                    await asyncio.to_thread(_persist_batch, candidate_batch)
-                                else:
-                                    _persist_batch(candidate_batch)
+                                for candidate in candidate_batch:
+                                    ml_flagged_total += 1
+                                    magnitude = abs(candidate.evidence.get("anomaly_score", 0.0))
+                                    heapq.heappush(ml_heap, (magnitude, ml_flagged_total, candidate))
+                                    if len(ml_heap) > MAX_STREAMED_ML_FINDINGS:
+                                        heapq.heappop(ml_heap)
+                            ml_kept = len(ml_heap)
+                            top_ml_candidates = [c for _, _, c in ml_heap]
+                            if is_async_source:
+                                await asyncio.to_thread(_persist_batch, top_ml_candidates)
+                            else:
+                                _persist_batch(top_ml_candidates)
                     else:
                         profile = self.profiler.profile([], fields)
                         ml_fit_skipped = True
@@ -362,6 +394,8 @@ class ScanService:
             else:
                 used_sampled_ml = False
                 ml_fit_skipped = True
+                ml_flagged_total = 0
+                ml_kept = 0
                 if is_async_source:
                     if first_batch is not None:
                         await asyncio.to_thread(_process_batch, first_batch)
@@ -395,6 +429,8 @@ class ScanService:
                 )
             if profile_note:
                 notes = notes + "; " + profile_note
+            if ml_flagged_total > ml_kept:
+                notes = notes + f"; ml candidates capped at {ml_kept} of {ml_flagged_total} flagged"
             self.scans.complete(
                 conn,
                 scan_id=scan_id,
@@ -436,6 +472,8 @@ class ScanService:
                         "finding_count": total_findings,
                         "deferred": deferred,
                         "checkpointed": True,
+                        "ml_flagged_total": ml_flagged_total,
+                        "ml_kept": ml_kept,
                     },
                 )
         return self.get_scan_detail(scan_id)

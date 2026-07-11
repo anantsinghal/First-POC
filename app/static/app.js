@@ -1,7 +1,7 @@
 const $ = (s, root=document) => root.querySelector(s);
 const showAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = false; };
 const hideAuthBar = () => { const bar = document.getElementById('authBar'); if (bar) bar.hidden = true; };
-const api = async (url, options = {}) => {
+const apiRaw = async (url, options = {}) => {
   const headers = { ...(options.headers || {}) };
   const key = localStorage.getItem('scanner_api_key');
   if (key) headers['X-API-Key'] = key;
@@ -14,8 +14,9 @@ const api = async (url, options = {}) => {
     throw err;
   }
   if (!response.ok) throw new Error((await response.json().catch(()=>({detail:response.statusText}))).detail);
-  return response.json();
+  return response;
 };
+const api = async (url, options = {}) => (await apiRaw(url, options)).json();
 
 const TYPE_LABELS = {
   missing_required:'Missing required field', invalid_stage:'Invalid stage',
@@ -37,7 +38,96 @@ const humanizeType = (t) => TYPE_LABELS[t] || t.replace(/_/g,' ').replace(/\b\w/
 
 function setMessage(text, failure=false) { const message = $('#message'); message.textContent = text; message.style.color = failure ? 'var(--bad)' : 'var(--good)'; }
 function coverage(scan) { const c = scan?.coverage; if (!c) return $('#coverage').innerHTML = ''; $('#coverage').className = `coverage ${c.grade}`; $('#coverage').innerHTML = `<strong>Coverage: ${c.grade.toUpperCase()}</strong><p>${c.reason}</p><small>${c.observed_records} records · ${c.queried_fields.length} fields · Missing: ${c.missing_fields.join(', ') || 'none'}</small>${c.suppressed_checks.length ? `<p><small>Suppressed checks: ${c.suppressed_checks.join('; ')}</small></p>` : ''}`; }
-function showFindings(findings) { const target = $('#findings'); $('#findingCount').textContent = `${findings.length} finding${findings.length === 1 ? '' : 's'}`; target.innerHTML = ''; if (!findings.length) { $('#findingTypes').innerHTML = ''; return target.innerHTML = '<p>No findings in this scan.</p>'; } const template = $('#findingTemplate'); for (const item of findings) { const node = template.content.cloneNode(true); const badge = $('.badge', node); badge.textContent = item.severity; badge.classList.add(item.severity); $('.type-tag', node).textContent = humanizeType(item.finding_type); $('h3', node).textContent = item.title; const score = $('.score', node); score.textContent = `${Math.round(item.confidence * 100)}% confidence`; if (item.rank_score !== undefined && item.rank_score !== item.priority) { const arrow = item.rank_score < item.priority ? '▼' : '▲'; score.insertAdjacentHTML('beforeend', ` <span class="rank-tag">rank ${Number(item.rank_score).toFixed(2)} ${arrow}</span>`); } if (item.ranking_basis === 'model' && typeof item.model_p_accept === 'number') { const modelPct = Math.round(item.model_p_accept * 100); const factors = (item.model_factors || []).map(f => `${f.feature} ${f.contribution >= 0 ? '+' : ''}${Number(f.contribution).toFixed(2)}`).join(', ').replace(/"/g, '&quot;'); score.insertAdjacentHTML('beforeend', ` <span class="model-chip" title="${factors}">model: ${modelPct}% real</span>`); } $('.record', node).textContent = `${item.object_name} · ${item.record_name} (${item.record_id})`; $('.why', node).textContent = item.evidence.why || 'Review the supplied evidence.'; $('pre', node).textContent = JSON.stringify({ evidence:item.evidence, fingerprint:item.fingerprint, scan_id:item.scan_id, status:item.status }, null, 2); for (const button of node.querySelectorAll('[data-label]')) button.onclick = async () => { try { await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label}) }); setMessage('Review label saved.'); await refresh(); } catch (e) { setMessage(e.message, true); } }; target.append(node); } const counts = {}; for (const f of findings) counts[f.finding_type] = (counts[f.finding_type]||0) + 1; const chips = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([t,c]) => `<span class="type-chip">${humanizeType(t)} ×${c}</span>`).join(''); $('#findingTypes').innerHTML = chips; }
+const FINDINGS_PAGE_SIZE = 200;
+let findingsState = { scanId: null, offset: 0, total: 0, loaded: [] };
+
+async function fetchFindingsPage(scanId, offset) {
+  const response = await apiRaw(`/api/findings?scan_id=${scanId}&limit=${FINDINGS_PAGE_SIZE}&offset=${offset}`);
+  const items = await response.json();
+  const total = Number(response.headers.get('X-Total-Count') || items.length);
+  return { items, total };
+}
+
+function renderFindingCard(item) {
+  const template = $('#findingTemplate');
+  const node = template.content.cloneNode(true);
+  const badge = $('.badge', node); badge.textContent = item.severity; badge.classList.add(item.severity);
+  $('.type-tag', node).textContent = humanizeType(item.finding_type);
+  $('h3', node).textContent = item.title;
+  const score = $('.score', node); score.textContent = `${Math.round(item.confidence * 100)}% confidence`;
+  if (item.rank_score !== undefined && item.rank_score !== item.priority) {
+    const arrow = item.rank_score < item.priority ? '▼' : '▲';
+    score.insertAdjacentHTML('beforeend', ` <span class="rank-tag">rank ${Number(item.rank_score).toFixed(2)} ${arrow}</span>`);
+  }
+  if (item.ranking_basis === 'model' && typeof item.model_p_accept === 'number') {
+    const modelPct = Math.round(item.model_p_accept * 100);
+    const factors = (item.model_factors || []).map(f => `${f.feature} ${f.contribution >= 0 ? '+' : ''}${Number(f.contribution).toFixed(2)}`).join(', ').replace(/"/g, '&quot;');
+    score.insertAdjacentHTML('beforeend', ` <span class="model-chip" title="${factors}">model: ${modelPct}% real</span>`);
+  }
+  $('.record', node).textContent = `${item.object_name} · ${item.record_name} (${item.record_id})`;
+  $('.why', node).textContent = item.evidence.why || 'Review the supplied evidence.';
+  $('pre', node).textContent = JSON.stringify({ evidence:item.evidence, fingerprint:item.fingerprint, scan_id:item.scan_id, status:item.status }, null, 2);
+  for (const button of node.querySelectorAll('[data-label]')) {
+    button.onclick = async () => {
+      try {
+        await api(`/api/findings/${item.id}/feedback`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({label:button.dataset.label}) });
+        setMessage('Review label saved.');
+        await refresh();
+      } catch (e) { setMessage(e.message, true); }
+    };
+  }
+  return node;
+}
+
+function renderTypeChips(findings) {
+  const counts = {};
+  for (const f of findings) counts[f.finding_type] = (counts[f.finding_type]||0) + 1;
+  $('#findingTypes').innerHTML = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([t,c]) => `<span class="type-chip">${humanizeType(t)} ×${c}</span>`).join('');
+}
+
+function ensureLoadMoreButton() {
+  if (findingsState.loaded.length >= findingsState.total) return;
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'load-more';
+  btn.textContent = `Load more findings (${findingsState.total - findingsState.loaded.length} remaining)`;
+  btn.onclick = loadMoreFindings;
+  $('#findings').append(btn);
+}
+
+function showFindings(findings, total, { append = false } = {}) {
+  const target = $('#findings');
+  if (!append) {
+    target.innerHTML = '';
+    findingsState.loaded = [];
+  } else {
+    const existingBtn = $('#findings .load-more');
+    if (existingBtn) existingBtn.remove();
+  }
+  findingsState.total = total;
+  if (!append && !findings.length) {
+    $('#findingCount').textContent = '0 findings';
+    $('#findingTypes').innerHTML = '';
+    target.innerHTML = '<p>No findings in this scan.</p>';
+    return;
+  }
+  for (const item of findings) target.append(renderFindingCard(item));
+  findingsState.loaded.push(...findings);
+  $('#findingCount').textContent = findingsState.loaded.length < findingsState.total
+    ? `showing ${findingsState.loaded.length} of ${findingsState.total}`
+    : `${findingsState.loaded.length} finding${findingsState.loaded.length === 1 ? '' : 's'}`;
+  renderTypeChips(findingsState.loaded);
+  ensureLoadMoreButton();
+}
+
+async function loadMoreFindings() {
+  if (!findingsState.scanId) return;
+  try {
+    const { items, total } = await fetchFindingsPage(findingsState.scanId, findingsState.offset);
+    findingsState.offset += items.length;
+    showFindings(items, total, { append: true });
+  } catch (e) { setMessage(e.message, true); }
+}
 
 function showCatalog(schema) {
   const target = $('#catalog');
@@ -164,7 +254,15 @@ async function refresh() {
   } else {
     showDrift(null);
   }
-  showFindings(scan ? await api(`/api/findings?scan_id=${scan.id}`) : []);
+  if (scan) {
+    const { items, total } = await fetchFindingsPage(scan.id, 0);
+    findingsState.scanId = scan.id;
+    findingsState.offset = items.length;
+    showFindings(items, total);
+  } else {
+    findingsState = { scanId: null, offset: 0, total: 0, loaded: [] };
+    showFindings([], 0);
+  }
   const scans = await api('/api/scans');
   $('#scans').innerHTML = scans.length ? scans.map(s => `<div class="scan"><span>${s.object_name} · ${s.source_name}</span><span>${s.row_count} records · ${new Date(s.created_at).toLocaleString()}</span></div>`).join('') : '<p>No scan manifests yet.</p>';
   try { showMetrics(await api('/api/metrics')); } catch (e) { const t = $('#metrics'); if (t) t.innerHTML = ''; }

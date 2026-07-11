@@ -301,8 +301,14 @@ class FindingRepository:
         *,
         scan_id: str | None = None,
         status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
-        """List findings (no feedback join; caller adds if needed). Matches baseline WHERE/ORDER."""
+        """List findings (no feedback join; caller adds if needed). Matches baseline WHERE/ORDER.
+
+        limit=None (the default) returns every matching row, unchanged from baseline. When limit is
+        given, SQL LIMIT/OFFSET is applied AFTER the existing ORDER BY, so callers get a stable page.
+        """
         clauses: list[str] = []
         params: list[Any] = []
         if scan_id:
@@ -312,11 +318,28 @@ class FindingRepository:
             clauses.append("status=?")
             params.append(status)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        rows = conn.execute(
-            f"SELECT * FROM findings {where} ORDER BY priority DESC, last_seen_at DESC, rowid DESC",
-            params,
-        ).fetchall()
+        query = f"SELECT * FROM findings {where} ORDER BY priority DESC, last_seen_at DESC, rowid DESC"
+        if limit is not None:
+            query += " LIMIT ? OFFSET ?"
+            params = [*params, limit, offset]
+        rows = conn.execute(query, params).fetchall()
         return [serialise_row(row) for row in rows]
+
+    def count(
+        self, conn: sqlite3.Connection, *, scan_id: str | None = None, status: str | None = None
+    ) -> int:
+        """Count findings matching the same WHERE logic as list(), ignoring limit/offset."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scan_id:
+            clauses.append("scan_id=?")
+            params.append(scan_id)
+        if status:
+            clauses.append("status=?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        row = conn.execute(f"SELECT COUNT(*) FROM findings {where}", params).fetchone()
+        return row[0] if row else 0
 
     def get(self, conn: sqlite3.Connection, finding_id: str) -> dict[str, Any] | None:
         """Return serialised finding or None."""

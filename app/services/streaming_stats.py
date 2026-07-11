@@ -6,7 +6,7 @@ from typing import Any
 
 from ..detection.base import Candidate, DetectionContext, make_candidate
 from ..detection.ml.isolation_forest import StreamingIsolationForest
-from ..detection.statistical.thresholds import MAD_THRESHOLD, iqr_fences, mad_z
+from ..detection.statistical.thresholds import MAD_THRESHOLD, mad_z
 from ..domain.values import clean, parse_float
 
 try:
@@ -83,6 +83,7 @@ class StreamingStatsPass:
         object_name: str,
         policy,
         batch_size: int = 5000,
+        iqr_multiplier: float = 1.5,
     ) -> Iterator[list[Candidate]]:
         if pq is None:
             raise RuntimeError("pyarrow not installed")
@@ -95,7 +96,7 @@ class StreamingStatsPass:
                 stats = aggregates.get(field)
                 if stats is None:
                     continue
-                fences = iqr_fences(stats["q1"], stats["q3"])
+                fences = _iqr_fences(stats["q1"], stats["q3"], iqr_multiplier)
                 for record in records:
                     value = parse_float(record.get(field))
                     if value is None:
@@ -115,7 +116,13 @@ class StreamingStatsPass:
                                         "method": "IQR (streamed)",
                                         "lower_bound": round(lower, 2),
                                         "upper_bound": round(upper, 2),
-                                        "why": "The value falls outside the 1.5xIQR range computed from streamed continuous quantiles for this scan.",
+                                        "why": (
+                                            f"The value falls outside the {iqr_multiplier:g}xIQR range computed "
+                                            "from streamed continuous quantiles for this scan. The streamed pass "
+                                            "uses a wider fence than the in-memory detector's 1.5xIQR (which sees "
+                                            "the whole object at once) because at scale the far-outlier signal is "
+                                            "what matters and a narrower fence would flood the review queue."
+                                        ),
                                     },
                                 )
                             )
@@ -193,6 +200,16 @@ class StreamingStatsPass:
                     )
                 )
             yield candidates
+
+
+def _iqr_fences(q1: float, q3: float, multiplier: float) -> tuple[float, float] | None:
+    """Tukey fences at a caller-chosen multiplier (app/detection/statistical/thresholds.iqr_fences
+    hardcodes 1.5 for the in-memory detector; this streamed pass needs a configurable multiplier,
+    so the formula is duplicated here rather than touching the detection package)."""
+    iqr = q3 - q1
+    if iqr <= 0:
+        return None
+    return (q1 - multiplier * iqr, q3 + multiplier * iqr)
 
 
 def _batch_to_records(batch) -> list[dict[str, str]]:

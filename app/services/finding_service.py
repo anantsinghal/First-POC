@@ -26,15 +26,31 @@ class FindingService:
         self.audit = audit
         self.ranker = ranker
 
-    def list_findings(self, scan_id: str | None = None, status: str | None = None) -> list[dict]:
-        """List findings, attaching feedback list for each (matches baseline list_findings behavior)."""
+    def list_findings(
+        self,
+        scan_id: str | None = None,
+        status: str | None = None,
+        *,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List findings, attaching feedback list for each (matches baseline list_findings behavior).
+
+        Ranking is applied to whatever page is returned (limit/offset trims at the SQL level first),
+        so it refines order WITHIN a page rather than re-sorting the full result set.
+        """
         with self.database.connect() as conn:
-            rows = self.findings.list(conn, scan_id=scan_id, status=status)
+            rows = self.findings.list(conn, scan_id=scan_id, status=status, limit=limit, offset=offset)
             for row in rows:
                 row["feedback"] = self.feedback.list_for_finding(conn, row["id"])
             if self.ranker is not None:
                 return self.ranker.rank(rows)
             return rows
+
+    def count_findings(self, scan_id: str | None = None, status: str | None = None) -> int:
+        """Total findings matching the same filters as list_findings, ignoring limit/offset."""
+        with self.database.connect() as conn:
+            return self.findings.count(conn, scan_id=scan_id, status=status)
 
     def add_feedback(self, finding_id: str, label: str, note: str, reviewer: str) -> dict:
         """Map label to status, insert feedback, update finding status. Raises NotFoundError if finding missing."""

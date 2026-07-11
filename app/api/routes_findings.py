@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.services.errors import NotFoundError
 
@@ -14,11 +14,17 @@ router = APIRouter()
 
 @router.get("/api/findings")
 def list_findings(
+    response: Response,
     scan_id: str | None = None,
     status: str | None = None,
+    limit: int = Query(200, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     container: Container = Depends(get_container),
 ) -> list[dict[str, Any]]:
-    return container.finding_service.list_findings(scan_id, status)
+    """Paginated findings. Response STAYS a bare list (test_scanner.py contract); the total row
+    count (ignoring limit/offset) is exposed via the X-Total-Count header for the dashboard."""
+    response.headers["X-Total-Count"] = str(container.finding_service.count_findings(scan_id, status))
+    return container.finding_service.list_findings(scan_id, status, limit=limit, offset=offset)
 
 
 @router.post("/api/findings/{finding_id}/feedback")
