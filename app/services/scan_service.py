@@ -39,6 +39,13 @@ low-value candidates. Only the top-K by |anomaly_score| are kept (a small heap, 
 bounded regardless of how many rows were scored); the scan is honest about the cap in its notes and
 audit detail (ml_flagged_total vs ml_kept)."""
 
+ORPHAN_DISTINCT_PARENT_CAP = 2000
+"""Max distinct non-empty parent ids probed per reference field on the bulk/stream path. Above this
+we skip the field (audit note) rather than issue unbounded existence queries against Salesforce."""
+
+ORPHAN_ID_BATCH_SIZE = 200
+"""Batch size for SELECT Id FROM <target> WHERE Id IN (...) existence probes."""
+
 
 class ScanService:
     """Orchestrates a full scan: load via DataSource -> profile -> grade coverage -> detect -> persist atomically."""
@@ -262,6 +269,8 @@ class ScanService:
         reservoir_rng = random.Random(42)
         reservoir_size = 5_000
         sample_records: list[Record] = []
+        orphan_ran = False
+        orphan_probe_notes: list[str] = []
         with self.database.connect() as conn:
             self.scans.insert_running(
                 conn,
@@ -362,6 +371,44 @@ class ScanService:
                                 writer.write(b)
                         writer.close()
                         writer = None
+                        # Bulk orphan resolution (bounded): SalesforceBulkSource never pre-resolves
+                        # related_ids. When the source has a queryable SF client and schema refs,
+                        # probe distinct parents from Parquet (2000-cap) then existence in 200-id
+                        # batches, and run one checkpointed orphan_reference-only pass.
+                        if (
+                            not related_ids
+                            and schema is not None
+                            and schema.reference_fields()
+                            and hasattr(source, "client")
+                            and hasattr(getattr(source, "client", None), "query_records")
+                        ):
+                            resolved, probe_notes = await self._resolve_stream_related_ids(
+                                source=source,
+                                schema=schema,
+                                object_name=object_name,
+                                cols=cols,
+                                parquet_path=path,
+                            )
+                            orphan_probe_notes.extend(probe_notes)
+                            if resolved:
+                                related_ids = resolved
+                                orphan_count = await self._flag_orphans_from_parquet(
+                                    conn=conn,
+                                    parquet_path=path,
+                                    cols=cols,
+                                    object_name=object_name,
+                                    fields=fields,
+                                    schema=schema,
+                                    related_ids=related_ids,
+                                    scan_id=scan_id,
+                                    source_hash=source_hash,
+                                    created=created,
+                                    src_key=src_key,
+                                    is_async_source=is_async_source,
+                                    flagged=flagged,
+                                )
+                                total_findings += orphan_count
+                                orphan_ran = True
                         profile = ColumnarProfiler().profile(path, cols)
                         # Incremental delta: pass-2 stats/ML would baseline against the changes-only
                         # population — statistically invalid. Skip them and mark the scan honest.
@@ -471,6 +518,13 @@ class ScanService:
                 notes = notes + "; " + profile_note
             if ml_flagged_total > ml_kept:
                 notes = notes + f"; ml candidates capped at {ml_kept} of {ml_flagged_total} flagged"
+            # Honesty: orphan_reference cannot run without parent existence sets. When related_ids is
+            # still empty and the schema declares reference fields, surface the gap explicitly.
+            schema_has_refs = bool(schema is not None and schema.reference_fields())
+            if not related_ids and schema_has_refs and not orphan_ran:
+                notes = notes + "; orphan checks deferred (no reference resolution on this path)"
+            for pn in orphan_probe_notes:
+                notes = notes + "; " + pn
             self.scans.complete(
                 conn,
                 scan_id=scan_id,
@@ -502,6 +556,10 @@ class ScanService:
                         "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
                         "missing_children", "pattern_break", "ml_anomaly",
                     ]
+                # Honesty: list orphan_reference when it could not run (empty related_ids + refs).
+                if not related_ids and schema_has_refs and not orphan_ran:
+                    if "orphan_reference" not in deferred:
+                        deferred = list(deferred) + ["orphan_reference"]
                 detail = {
                     "row_count": total_records,
                     "batches": batches,
@@ -511,6 +569,8 @@ class ScanService:
                     "ml_flagged_total": ml_flagged_total,
                     "ml_kept": ml_kept,
                 }
+                if orphan_probe_notes:
+                    detail["orphan_probe_notes"] = list(orphan_probe_notes)
                 if skip_statistical_pass:
                     detail["delta_scan"] = True
                     detail["deferred_detectors"] = deferred
@@ -523,6 +583,155 @@ class ScanService:
                     detail=detail,
                 )
         return self.get_scan_detail(scan_id)
+
+    async def _resolve_stream_related_ids(
+        self,
+        *,
+        source,
+        schema,
+        object_name: str,
+        cols: list[str],
+        parquet_path: str,
+    ) -> tuple[dict[str, frozenset[str]], list[str]]:
+        """Probe distinct parent ids from Parquet and resolve existence via the Salesforce client.
+
+        Per reference field (single target, present in cols, not a self-ref): DuckDB DISTINCT with
+        LIMIT 2001; skip the field when more than ORPHAN_DISTINCT_PARENT_CAP distinct parents.
+        Existence is checked with SELECT Id FROM <target> WHERE Id IN (...) in ORPHAN_ID_BATCH_SIZE
+        batches; SalesforceError skips that field. Returns (related_ids, probe_notes).
+        """
+        from ..salesforce.session import SalesforceError
+
+        try:
+            import duckdb
+        except Exception:
+            return {}, ["orphan probe skipped: duckdb unavailable"]
+
+        client = getattr(source, "client", None)
+        if client is None or not hasattr(client, "query_records"):
+            return {}, []
+
+        path_sql = str(Path(parquet_path).resolve()).replace("'", "''")
+        relation = f"read_parquet('{path_sql}')"
+        accumulator: dict[str, set[str]] = {}
+        notes: list[str] = []
+
+        for fd in schema.reference_fields():
+            if fd.name not in cols:
+                continue
+            if len(fd.reference_to) != 1:
+                continue
+            target = fd.reference_to[0]
+            if target == object_name:
+                continue
+            qname = '"' + fd.name.replace('"', '""') + '"'
+            try:
+                con = duckdb.connect()
+                try:
+                    rows = con.execute(
+                        f"SELECT DISTINCT {qname} FROM {relation} "
+                        f"WHERE trim({qname}) <> '' LIMIT {ORPHAN_DISTINCT_PARENT_CAP + 1}"
+                    ).fetchall()
+                finally:
+                    con.close()
+            except Exception as exc:
+                notes.append(f"orphan probe skipped {fd.name}: {type(exc).__name__}")
+                continue
+            if len(rows) > ORPHAN_DISTINCT_PARENT_CAP:
+                notes.append(
+                    f"orphan probe skipped {fd.name}: too many distinct parents"
+                )
+                continue
+            referenced = sorted(
+                {clean(r[0] if r else None) for r in rows if clean(r[0] if r else None)}
+            )
+            if not referenced:
+                continue
+            existing: set[str] = set()
+            target_skipped = False
+            for i in range(0, len(referenced), ORPHAN_ID_BATCH_SIZE):
+                batch = referenced[i : i + ORPHAN_ID_BATCH_SIZE]
+                inlist = ", ".join("'" + rid.replace("'", "") + "'" for rid in batch)
+                try:
+                    probe_rows = await client.query_records(
+                        f"SELECT Id FROM {target} WHERE Id IN ({inlist})",
+                        max_records=len(batch),
+                    )
+                except SalesforceError:
+                    target_skipped = True
+                    break
+                existing |= {
+                    clean(row.get("Id")) for row in probe_rows if clean(row.get("Id"))
+                }
+            if not target_skipped:
+                accumulator.setdefault(target, set()).update(existing)
+
+        related = {t: frozenset(ids) for t, ids in accumulator.items()}
+        return related, notes
+
+    async def _flag_orphans_from_parquet(
+        self,
+        *,
+        conn,
+        parquet_path: str,
+        cols: list[str],
+        object_name: str,
+        fields: list[str],
+        schema,
+        related_ids: dict[str, frozenset[str]],
+        scan_id: str,
+        source_hash: str,
+        created: str,
+        src_key: str,
+        is_async_source: bool,
+        flagged: set[str],
+    ) -> int:
+        """One checkpointed orphan_reference-only pass over staged Parquet. Returns candidate count."""
+        try:
+            import pyarrow.parquet as pq
+        except Exception:
+            return 0
+
+        def _run_orphan_batches() -> int:
+            parquet_file = pq.ParquetFile(str(parquet_path))
+            count = 0
+            for batch in parquet_file.iter_batches(batch_size=5000):
+                records = [
+                    {
+                        key: clean("" if value is None else str(value))
+                        for key, value in row.items()
+                    }
+                    for row in batch.to_pylist()
+                ]
+                ctx = DetectionContext(
+                    object_name,
+                    records,
+                    fields or cols,
+                    self.policy,
+                    None,
+                    schema=schema,
+                    related_ids=related_ids or {},
+                )
+                cands = self.registry.detect(ctx, include={"orphan_reference"})
+                if cands:
+                    self.findings.upsert_many(
+                        conn,
+                        scan_id=scan_id,
+                        candidates=cands,
+                        source_hash=source_hash,
+                        scan_created_at=created,
+                        source_key=src_key,
+                    )
+                    conn.commit()
+                    count += len(cands)
+                    for c in cands:
+                        if c.record_id:
+                            flagged.add(c.record_id)
+            return count
+
+        if is_async_source:
+            return await asyncio.to_thread(_run_orphan_batches)
+        return _run_orphan_batches()
 
     def _profile(self, dataset):
         """Profile the dataset, out-of-core (Parquet+DuckDB) for large objects per the planner.
