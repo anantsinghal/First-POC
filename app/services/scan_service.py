@@ -69,8 +69,15 @@ class ScanService:
         self.policy = policy
         self.audit = audit
 
-    async def run_scan(self, source: DataSource) -> dict:
-        """Execute the scan pipeline. Load first (no DB side effects on failure). Use single UoW for writes."""
+    async def run_scan(
+        self, source: DataSource, *, include_override: frozenset[str] | None = None
+    ) -> dict:
+        """Execute the scan pipeline. Load first (no DB side effects on failure). Use single UoW for writes.
+
+        include_override: when set, bypass the planner and run only that detector id set. Used by
+        incremental delta scans so statistical/ML baselines are never computed on a changes-only
+        population (which would be statistically invalid).
+        """
         self.database.setup()
         dataset = await source.load()
         scan_id = str(uuid4())
@@ -108,9 +115,23 @@ class ScanService:
                     related_ids=related_ids,
                     related_records=dataset.related_records or {},
                 )
-                # The row count is the current estimate; production will supply a pre-extraction count.
-                plan = self.planner.plan(dataset.object_name, len(dataset.records))
-                candidates = self.registry.detect(ctx, include=plan.included_ids)
+                if include_override is not None:
+                    # Delta path: skip planner; run only contract/rule (and orphan) detectors.
+                    plan = None
+                    candidates = self.registry.detect(ctx, include=include_override)
+                else:
+                    # The row count is the current estimate; production will supply a pre-extraction count.
+                    plan = self.planner.plan(dataset.object_name, len(dataset.records))
+                    candidates = self.registry.detect(ctx, include=plan.included_ids)
+            if plan is None:
+                notes = f"{len(candidates)} candidate occurrences generated."
+            else:
+                notes = f"{len(candidates)} candidate occurrences generated. {plan.notes}"
+            if include_override is not None:
+                notes += (
+                    " (delta scan: contract/rule checks only; statistical "
+                    "and ML detectors skipped — population is changes-only)"
+                )
             self.findings.upsert_many(
                 conn,
                 scan_id=scan_id,
@@ -124,11 +145,7 @@ class ScanService:
                 scan_id=scan_id,
                 completed_at=now(),
                 profile=profile.to_dict(),
-                notes=(
-                    f"{len(candidates)} candidate occurrences generated."
-                    if plan is None
-                    else f"{len(candidates)} candidate occurrences generated. {plan.notes}"
-                ),
+                notes=notes,
             )
             # Snapshot quality counts at completion so trend is stable even after findings'
             # scan_id migrates to later scans on re-detection.
@@ -143,23 +160,34 @@ class ScanService:
                     conn, scan_id=scan_id, object_name=dataset.object_name, schema=dataset.schema.to_dict()
                 )
             if self.audit is not None:
+                if include_override is not None:
+                    deferred = sorted(d for d in DETECTOR_TIERS if d not in include_override)
+                    planned = len(include_override)
+                else:
+                    deferred = [] if plan is None else [detector_id for detector_id, _ in plan.skipped]
+                    planned = 0 if plan is None else len(plan.included_ids)
+                detail = {
+                    "finding_count": len(candidates),
+                    "coverage_grade": coverage.grade.value,
+                    "row_count": len(dataset.records),
+                    "deferred_detectors": deferred,
+                    "planned_detectors": planned,
+                }
+                if include_override is not None:
+                    detail["delta_scan"] = True
                 self.audit.append(
                     conn,
                     event="scan_completed",
                     actor="system",
                     scan_id=scan_id,
                     object_name=dataset.object_name,
-                    detail={
-                        "finding_count": len(candidates),
-                        "coverage_grade": coverage.grade.value,
-                        "row_count": len(dataset.records),
-                        "deferred_detectors": [] if plan is None else [detector_id for detector_id, _ in plan.skipped],
-                        "planned_detectors": 0 if plan is None else len(plan.included_ids),
-                    },
+                    detail=detail,
                 )
         return self.get_scan_detail(scan_id)
 
-    async def stream_scan(self, source: DataSource) -> dict:
+    async def stream_scan(
+        self, source: DataSource, *, skip_statistical_pass: bool = False
+    ) -> dict:
         """Bounded-memory DETECTING scan using iter_batches or aiter_batches when available.
 
         Runs only tier-0 detectors per batch (plus orphan_reference when related_ids present).
@@ -170,6 +198,9 @@ class ScanService:
         to ephemeral Parquet (if scale deps) for columnar profile; otherwise empty profile + note.
         Falls back to run_scan when no iter/aiter_batches. Share per-batch via inner fn. All existing
         tests unaffected.
+
+        skip_statistical_pass: when True (incremental delta), do not run pass-2 streamed
+        stats/ML — baselines computed on a changes-only population would be statistically invalid.
         """
         self.database.setup()
         scan_id = str(uuid4())
@@ -332,50 +363,53 @@ class ScanService:
                         writer.close()
                         writer = None
                         profile = ColumnarProfiler().profile(path, cols)
-                        stats_pass = StreamingStatsPass()
-                        aggs = stats_pass.numeric_aggregates(path, cols)
-                        if aggs:
-                            ran_streamed_stats = True
-                            for candidate_batch in stats_pass.flag_batches(
-                                path,
-                                cols,
-                                aggs,
-                                object_name=object_name,
-                                policy=self.policy,
-                                iqr_multiplier=STREAMED_IQR_MULTIPLIER,
-                            ):
+                        # Incremental delta: pass-2 stats/ML would baseline against the changes-only
+                        # population — statistically invalid. Skip them and mark the scan honest.
+                        if not skip_statistical_pass:
+                            stats_pass = StreamingStatsPass()
+                            aggs = stats_pass.numeric_aggregates(path, cols)
+                            if aggs:
+                                ran_streamed_stats = True
+                                for candidate_batch in stats_pass.flag_batches(
+                                    path,
+                                    cols,
+                                    aggs,
+                                    object_name=object_name,
+                                    policy=self.policy,
+                                    iqr_multiplier=STREAMED_IQR_MULTIPLIER,
+                                ):
+                                    if is_async_source:
+                                        await asyncio.to_thread(_persist_batch, candidate_batch)
+                                    else:
+                                        _persist_batch(candidate_batch)
+                            forest = StreamingIsolationForest()
+                            ml_fit_skipped = not forest.fit(sample_records, cols)
+                            if not ml_fit_skipped:
+                                used_sampled_ml = True
+                                # Bounded top-K selection by |anomaly_score|: push every scored candidate
+                                # into a size-capped min-heap (smallest magnitude evicted first), so memory
+                                # never exceeds MAX_STREAMED_ML_FINDINGS regardless of how many rows are
+                                # scored. Persisted once, after the generator is fully drained.
+                                ml_heap: list[tuple[float, int, object]] = []
+                                for candidate_batch in stats_pass.score_ml_batches(
+                                    path,
+                                    cols,
+                                    forest,
+                                    object_name=object_name,
+                                    policy=self.policy,
+                                ):
+                                    for candidate in candidate_batch:
+                                        ml_flagged_total += 1
+                                        magnitude = abs(candidate.evidence.get("anomaly_score", 0.0))
+                                        heapq.heappush(ml_heap, (magnitude, ml_flagged_total, candidate))
+                                        if len(ml_heap) > MAX_STREAMED_ML_FINDINGS:
+                                            heapq.heappop(ml_heap)
+                                ml_kept = len(ml_heap)
+                                top_ml_candidates = [c for _, _, c in ml_heap]
                                 if is_async_source:
-                                    await asyncio.to_thread(_persist_batch, candidate_batch)
+                                    await asyncio.to_thread(_persist_batch, top_ml_candidates)
                                 else:
-                                    _persist_batch(candidate_batch)
-                        forest = StreamingIsolationForest()
-                        ml_fit_skipped = not forest.fit(sample_records, cols)
-                        if not ml_fit_skipped:
-                            used_sampled_ml = True
-                            # Bounded top-K selection by |anomaly_score|: push every scored candidate
-                            # into a size-capped min-heap (smallest magnitude evicted first), so memory
-                            # never exceeds MAX_STREAMED_ML_FINDINGS regardless of how many rows are
-                            # scored. Persisted once, after the generator is fully drained.
-                            ml_heap: list[tuple[float, int, object]] = []
-                            for candidate_batch in stats_pass.score_ml_batches(
-                                path,
-                                cols,
-                                forest,
-                                object_name=object_name,
-                                policy=self.policy,
-                            ):
-                                for candidate in candidate_batch:
-                                    ml_flagged_total += 1
-                                    magnitude = abs(candidate.evidence.get("anomaly_score", 0.0))
-                                    heapq.heappush(ml_heap, (magnitude, ml_flagged_total, candidate))
-                                    if len(ml_heap) > MAX_STREAMED_ML_FINDINGS:
-                                        heapq.heappop(ml_heap)
-                            ml_kept = len(ml_heap)
-                            top_ml_candidates = [c for _, _, c in ml_heap]
-                            if is_async_source:
-                                await asyncio.to_thread(_persist_batch, top_ml_candidates)
-                            else:
-                                _persist_batch(top_ml_candidates)
+                                    _persist_batch(top_ml_candidates)
                     else:
                         profile = self.profiler.profile([], fields)
                         ml_fit_skipped = True
@@ -416,7 +450,13 @@ class ScanService:
             )
             self.coverage_repo.insert(conn, scan_id, coverage)
             self.scans.set_row_count(conn, scan_id, total_records)
-            if columnar_available:
+            if skip_statistical_pass:
+                notes = (
+                    f"streamed scan: {total_findings} findings from tier-0 detectors over {batches} batches"
+                    " (delta scan: contract/rule checks only; statistical "
+                    "and ML detectors skipped — population is changes-only)"
+                )
+            elif columnar_available:
                 streamed_suffix = " + sampled ML" if used_sampled_ml else ""
                 notes = (
                     f"streamed scan: {total_findings} findings (tier-0 + streamed stats{streamed_suffix}) "
@@ -449,7 +489,9 @@ class ScanService:
                     conn, scan_id=scan_id, object_name=object_name, schema=schema.to_dict()
                 )
             if self.audit is not None:
-                if columnar_available:
+                if skip_statistical_pass:
+                    deferred = sorted(d for d in DETECTOR_TIERS if d not in tier0)
+                elif columnar_available:
                     deferred = ["pattern_break", "rare_combination", "duplicate_name", "missing_children"]
                     if not ran_streamed_stats:
                         deferred = ["numeric_outlier", "robust_outlier"] + deferred
@@ -460,21 +502,25 @@ class ScanService:
                         "numeric_outlier", "robust_outlier", "rare_combination", "duplicate_name",
                         "missing_children", "pattern_break", "ml_anomaly",
                     ]
+                detail = {
+                    "row_count": total_records,
+                    "batches": batches,
+                    "finding_count": total_findings,
+                    "deferred": deferred,
+                    "checkpointed": True,
+                    "ml_flagged_total": ml_flagged_total,
+                    "ml_kept": ml_kept,
+                }
+                if skip_statistical_pass:
+                    detail["delta_scan"] = True
+                    detail["deferred_detectors"] = deferred
                 self.audit.append(
                     conn,
                     event="scan_streamed",
                     actor="system",
                     scan_id=scan_id,
                     object_name=object_name,
-                    detail={
-                        "row_count": total_records,
-                        "batches": batches,
-                        "finding_count": total_findings,
-                        "deferred": deferred,
-                        "checkpointed": True,
-                        "ml_flagged_total": ml_flagged_total,
-                        "ml_kept": ml_kept,
-                    },
+                    detail=detail,
                 )
         return self.get_scan_detail(scan_id)
 

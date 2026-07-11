@@ -6,7 +6,14 @@ from ..domain.models import stable_hash
 from ..persistence.database import Database, now
 from ..persistence.repositories import AuditRepository, FindingRepository, SyncRepository
 from ..persistence.source_key import source_key_from_name
+from ..planning.planner import DETECTOR_TIERS
 from .scan_service import ScanService
+
+
+# Tier-0 contract/rule detectors + orphan_reference. Statistical/ML detectors are intentionally
+# excluded from incremental delta scans: their baselines must be computed on the true population,
+# not the changes-only subset (see completion-plan-v2 F7 / Phase 65).
+DELTA_INCLUDE = frozenset(d for d, t in DETECTOR_TIERS.items() if t == 0) | {"orphan_reference"}
 
 
 def _derive_source_key(source) -> str:
@@ -86,10 +93,13 @@ class SyncService:
                     yield batch
 
             source.aiter_batches = _tee
-            scan = await self.scan_service.stream_scan(source)
+            # Pass-1 is already tier-0-only; skip pass-2 stats/ML on the changes-only population.
+            scan = await self.scan_service.stream_scan(source, skip_statistical_pass=True)
         else:
             dataset = await source.load()
-            scan = await self.scan_service.run_scan(_Preloaded(dataset))
+            scan = await self.scan_service.run_scan(
+                _Preloaded(dataset), include_override=DELTA_INCLUDE
+            )
             changed_records = len(dataset.records)
             entries = [(record["Id"], stable_hash(record)) for record in dataset.records if record.get("Id")]
             self._ledger_flush(object_name=object_name, entries=entries, seen_at=seen_at, source_key=src_key)
