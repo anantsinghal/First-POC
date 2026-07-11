@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 from app.domain.enums import CoverageGrade, Severity
-from app.domain.models import Candidate, Coverage
+from app.domain.models import Candidate, Coverage, stable_hash
 from app.persistence.database import Database
 from app.persistence.repositories import (
     CoverageRepository,
@@ -64,6 +64,14 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
     coverage = _make_sample_coverage()
     profile = {"record_count": 11, "fields": {}}
     notes = "1 candidate occurrences generated."
+    source_key = "src:demo.csv"
+    stored_fingerprint = stable_hash({
+        "source": source_key,
+        "object": candidate.object_name,
+        "record": candidate.record_id,
+        "rule": candidate.finding_type,
+        "field": candidate.field_name,
+    })
 
     # Atomic write block (simulates unit-of-work)
     with db.connect() as conn:
@@ -76,6 +84,7 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
             row_count=11,
             source_hash=source_hash,
             fields=["Id", "Name", "StageName"],
+            source_key=source_key,
         )
         cov_repo.insert(conn, scan_id, coverage)
         find_repo.upsert(
@@ -84,6 +93,7 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
             candidate=candidate,
             source_hash=source_hash,
             scan_created_at=created_at,
+            source_key=source_key,
         )
         scan_repo.complete(
             conn,
@@ -111,7 +121,10 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
         f = findings[0]
         assert f["severity"] == "high"  # stored as .value plain string
         assert f["evidence"] == candidate.evidence  # round-tripped via serialise_row
-        assert f["fingerprint"] == candidate.fingerprint
+        # Stored fingerprint folds in source_key (source-scoped identity); the domain
+        # Candidate.fingerprint property itself stays source-blind (engine doesn't know sources).
+        assert f["fingerprint"] == stored_fingerprint
+        assert f["fingerprint"] != candidate.fingerprint
         assert f["status"] == "open"
 
     # Idempotency: upsert same candidate twice -> still 1 row
@@ -122,6 +135,7 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
             candidate=candidate,
             source_hash=source_hash,
             scan_created_at=created_at,
+            source_key=source_key,
         )
     with db.connect() as conn:
         assert find_repo.count_for_scan(conn, scan_id) == 1
@@ -138,6 +152,7 @@ def test_persistence_repositories_roundtrip_and_upsert_logic(tmp_path: Path):
             candidate=candidate,
             source_hash=source_hash,
             scan_created_at=created_at,
+            source_key=source_key,
         )
         f2 = find_repo.list(conn, scan_id=scan_id)[0]
         assert f2["status"] == "reopened"

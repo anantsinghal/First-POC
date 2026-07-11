@@ -103,6 +103,7 @@ def test_retention_purge_repo_and_service(tmp_path: Path):
             row_count=1,
             source_hash=source_hash,
             fields=["Id", "StageName"],
+            source_key="src:recent.csv",
         )
         cov_repo.insert(conn, recent_id, coverage)
         find_repo.upsert(
@@ -111,6 +112,7 @@ def test_retention_purge_repo_and_service(tmp_path: Path):
             candidate=candidate_recent,
             source_hash=source_hash,
             scan_created_at=recent_created,
+            source_key="src:recent.csv",
         )
         scan_repo.complete(
             conn, scan_id=recent_id, completed_at=recent_created, profile=profile, notes=notes
@@ -132,6 +134,7 @@ def test_retention_purge_repo_and_service(tmp_path: Path):
             row_count=1,
             source_hash=source_hash,
             fields=["Id", "StageName"],
+            source_key="src:old.csv",
         )
         cov_repo.insert(conn, old_id, coverage)
         find_repo.upsert(
@@ -140,6 +143,7 @@ def test_retention_purge_repo_and_service(tmp_path: Path):
             candidate=candidate_old,
             source_hash=source_hash,
             scan_created_at=old_created,
+            source_key="src:old.csv",
         )
         scan_repo.complete(
             conn, scan_id=old_id, completed_at=old_created, profile=profile, notes=notes
@@ -206,6 +210,7 @@ def test_retention_purge_noop_for_recent_only(tmp_path: Path):
             row_count=1,
             source_hash=source_hash,
             fields=["Id"],
+            source_key="src:r.csv",
         )
         cov = _make_sample_coverage()
         cov_repo.insert(conn, recent_id, cov)

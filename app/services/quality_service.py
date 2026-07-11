@@ -69,7 +69,7 @@ class QualityService:
             quality_score = round(100 * clean_record_rate, 1) if clean_record_rate is not None else None
 
             previous_scan_id = self.scans.previous_scan_id(
-                conn, manifest["object_name"], manifest["created_at"]
+                conn, manifest["object_name"], manifest["created_at"], manifest.get("source_key", "")
             )
             previous_quality_score = (
                 self._score(conn, previous_scan_id) if previous_scan_id is not None else None

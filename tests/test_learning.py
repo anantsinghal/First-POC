@@ -55,6 +55,7 @@ def _seed_labeled_findings(container, *, scan_id: str, specs: list[tuple[str, st
             findings.upsert_many(
                 conn, scan_id=scan_id, candidates=[cand],
                 source_hash="h", scan_created_at="2026-01-01T00:00:00+00:00",
+                source_key="src:test",
             )
             row = conn.execute(
                 "SELECT id FROM findings WHERE record_id=? AND finding_type=? ORDER BY rowid DESC LIMIT 1",

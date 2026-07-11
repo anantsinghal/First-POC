@@ -9,9 +9,14 @@ import httpx
 from app.api.container import build_container
 from app.ingestion.salesforce_source import SalesforceObjectSource
 from app.persistence.repositories import AuditRepository, FindingRepository, SyncRepository
+from app.persistence.source_key import source_key_from_name
 from app.salesforce.client import SalesforceClient
 from app.salesforce.session import SalesforceSession
 from tests import harness
+
+# Matches what sync_service._derive_source_key computes for _source()'s fixed session host,
+# before source.load() ever runs (SalesforceObjectSource has no source_name until then).
+SOURCE_KEY = source_key_from_name("salesforce:sync-test.my.salesforce.com/Account")
 
 
 def _describe_payload() -> dict:
@@ -79,8 +84,8 @@ def test_initial_then_incremental_scan_tracks_ledger_and_watermark(tmp_path: Pat
     sync_repo = SyncRepository()
     audit_repo = AuditRepository()
     with container.database.connect() as conn:
-        assert sync_repo.ledger_active_ids(conn, "Account") == {"001", "002", "003"}
-        watermark_before = sync_repo.get_watermark(conn, "Account")
+        assert sync_repo.ledger_active_ids(conn, "Account", SOURCE_KEY) == {"001", "002", "003"}
+        watermark_before = sync_repo.get_watermark(conn, "Account", SOURCE_KEY)
         assert watermark_before is not None
         audits = [row for row in audit_repo.list(conn, limit=20) if row["event"] == "incremental_scan"]
     assert audits[0]["detail"] == {
@@ -115,8 +120,8 @@ def test_initial_then_incremental_scan_tracks_ledger_and_watermark(tmp_path: Pat
     assert second_scan["row_count"] == 1
     assert len(incremental_queries) == 1
     with container.database.connect() as conn:
-        assert sync_repo.ledger_active_ids(conn, "Account") == {"001", "002", "003"}
-        watermark_after = sync_repo.get_watermark(conn, "Account")
+        assert sync_repo.ledger_active_ids(conn, "Account", SOURCE_KEY) == {"001", "002", "003"}
+        watermark_after = sync_repo.get_watermark(conn, "Account", SOURCE_KEY)
         audits = [row for row in audit_repo.list(conn, limit=20) if row["event"] == "incremental_scan"]
     assert watermark_after is not None
     assert watermark_after >= watermark_before
@@ -189,7 +194,7 @@ def test_reconcile_marks_vanished_records_deleted_and_resolves_findings(tmp_path
         assert row["is_deleted"] == 1
         finding_rows = [row for row in finding_repo.list(conn) if row["record_id"] == "002"]
         assert all(row["status"] == "resolved" for row in finding_rows)
-        assert sync_repo.ledger_active_ids(conn, "Account") == {"001", "003"}
+        assert sync_repo.ledger_active_ids(conn, "Account", SOURCE_KEY) == {"001", "003"}
         audits = [row for row in audit_repo.list(conn, limit=20) if row["event"] == "reconciliation"]
     assert audits[0]["detail"] == {
         "object_name": "Account",
@@ -205,7 +210,7 @@ def test_incremental_scan_uses_watermark_minus_five_minutes(tmp_path: Path):
     container.database.setup()
     sync_repo = SyncRepository()
     with container.database.connect() as conn:
-        sync_repo.set_watermark(conn, "Account", "2026-07-04T10:00:00+00:00")
+        sync_repo.set_watermark(conn, "Account", "2026-07-04T10:00:00+00:00", SOURCE_KEY)
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/sobjects/Account/describe"):
@@ -235,14 +240,16 @@ def test_sync_repository_upsert_updates_without_duplicates_and_mark_deleted_coun
             object_name="Account",
             entries=[("001", "hash-a"), ("002", "hash-b")],
             seen_at="2026-07-04T10:00:00+00:00",
+            source_key="src:test",
         )
         sync_repo.ledger_upsert_many(
             conn,
             object_name="Account",
             entries=[("001", "hash-c")],
             seen_at="2026-07-04T11:00:00+00:00",
+            source_key="src:test",
         )
-        count = sync_repo.ledger_mark_deleted(conn, "Account", ["002", "999"])
+        count = sync_repo.ledger_mark_deleted(conn, "Account", ["002", "999"], "src:test")
         rows = conn.execute(
             """SELECT record_id, first_seen_at, last_seen_at, content_hash, is_deleted
                FROM record_ledger WHERE object_name=? ORDER BY record_id""",

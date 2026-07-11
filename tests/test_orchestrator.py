@@ -9,8 +9,12 @@ import httpx
 from app.api.container import build_container
 from app.ingestion.salesforce_bulk_source import SalesforceBulkSource
 from app.persistence.repositories import AuditRepository, SyncRepository
+from app.persistence.source_key import source_key_from_name
 from app.salesforce import SalesforceClient, SalesforceSession
 from tests import harness
+
+# Matches SalesforceBulkSource.source_name (set at construction) for this test's fixed session host.
+BULK_SOURCE_KEY = source_key_from_name("salesforce-bulk:bulk-inc-test.my.salesforce.com/Account")
 
 _SOBJECTS = [
     {"name": "Small__c", "custom": True, "queryable": True, "deprecatedAndHidden": False},
@@ -193,8 +197,8 @@ def test_bulk_incremental_ledgers_ids_and_advances_watermark(tmp_path: Path):
 
     sync_repo = SyncRepository()
     with container.database.connect() as conn:
-        assert sync_repo.ledger_active_ids(conn, "Account") == {"001", "002"}
-        watermark_before = sync_repo.get_watermark(conn, "Account")
+        assert sync_repo.ledger_active_ids(conn, "Account", BULK_SOURCE_KEY) == {"001", "002"}
+        watermark_before = sync_repo.get_watermark(conn, "Account", BULK_SOURCE_KEY)
     assert watermark_before is not None
 
     captured_queries: list[str] = []
@@ -228,8 +232,8 @@ def test_bulk_incremental_ledgers_ids_and_advances_watermark(tmp_path: Path):
 
     audit_repo = AuditRepository()
     with container.database.connect() as conn:
-        assert sync_repo.ledger_active_ids(conn, "Account") == {"001", "002", "003"}
-        watermark_after = sync_repo.get_watermark(conn, "Account")
+        assert sync_repo.ledger_active_ids(conn, "Account", BULK_SOURCE_KEY) == {"001", "002", "003"}
+        watermark_after = sync_repo.get_watermark(conn, "Account", BULK_SOURCE_KEY)
         audits = [row for row in audit_repo.list(conn, limit=20) if row["event"] == "incremental_scan"]
 
     assert watermark_after is not None

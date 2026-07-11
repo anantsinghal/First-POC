@@ -14,6 +14,7 @@ from ..domain.values import clean
 from ..ingestion.base import DataSource
 from ..persistence.database import Database, now
 from ..persistence.repositories import AuditRepository, CoverageRepository, FindingRepository, ScanRepository
+from ..persistence.source_key import source_key_from_name
 from ..planning.planner import DETECTOR_TIERS, ScanPlanner
 from ..policy.field_policy import FieldPolicy
 from ..profiling.profiler import Profiler
@@ -58,6 +59,7 @@ class ScanService:
         dataset = await source.load()
         scan_id = str(uuid4())
         created = now()
+        src_key = source_key_from_name(dataset.source_name)
         with self.database.connect() as conn:
             self.scans.insert_running(
                 conn,
@@ -68,6 +70,7 @@ class ScanService:
                 row_count=len(dataset.records),
                 source_hash=dataset.source_hash,
                 fields=dataset.fields,
+                source_key=src_key,
             )
             coverage = self.grader.grade(
                 dataset.object_name, dataset.records, dataset.fields,
@@ -98,6 +101,7 @@ class ScanService:
                 candidates=candidates,
                 source_hash=dataset.source_hash,
                 scan_created_at=created,
+                source_key=src_key,
             )
             self.scans.complete(
                 conn,
@@ -168,6 +172,7 @@ class ScanService:
                 source_name = f"sqlite:{dbn}/{object_name}"
             else:
                 source_name = f"stream:{object_name}"
+        src_key = source_key_from_name(source_name)
 
         # Prepare to iterate (re-entrant safe; use same iterator object to support one-shot iters)
         # Support async aiter_batches (for Bulk) by peeking first via __anext__; elif sync iter_batches
@@ -220,6 +225,7 @@ class ScanService:
                 row_count=0,
                 source_hash=source_hash,
                 fields=fields,
+                source_key=src_key,
             )
             conn.commit()
 
@@ -247,6 +253,7 @@ class ScanService:
                     candidates=cands,
                     source_hash=source_hash,
                     scan_created_at=created,
+                    source_key=src_key,
                 )
                 conn.commit()
                 total_findings += len(cands)
@@ -263,6 +270,7 @@ class ScanService:
                     candidates=candidate_batch,
                     source_hash=source_hash,
                     scan_created_at=created,
+                    source_key=src_key,
                 )
                 conn.commit()
                 total_findings += len(candidate_batch)
@@ -531,10 +539,12 @@ class ScanService:
             mode = "profile"
 
         coverage = self.grader.grade(object_name, [], fields, record_count=total)
+        src_key = source_key_from_name(source_name)
         with self.database.connect() as conn:
             self.scans.insert_running(
                 conn, scan_id=scan_id, source_name=source_name, object_name=object_name,
                 created_at=created, row_count=total, source_hash=source_hash, fields=fields,
+                source_key=src_key,
             )
             self.coverage_repo.insert(conn, scan_id, coverage)
             self.scans.complete(

@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterator
+from uuid import uuid4
 
 
 def now() -> str:
@@ -118,3 +119,130 @@ class Database:
             CREATE INDEX IF NOT EXISTS finding_scan_index ON findings(scan_id);
             CREATE INDEX IF NOT EXISTS finding_status_index ON findings(status);
             """)
+            self._migrate_source_identity(conn)
+
+    def _migrate_source_identity(self, conn: sqlite3.Connection) -> None:
+        """v1 -> v2 schema migration: add source_key to findings/scan_manifests (simple ALTER),
+        rebuild sync_state/record_ledger with source_key folded into their PRIMARY KEY (table
+        rebuild, since SQLite can't ALTER a primary key), backfill source_key from source_name,
+        and recompute every finding's fingerprint to include the source dimension so identity no
+        longer collides across two different sources that happen to share an object/record id.
+
+        Guarded by PRAGMA user_version so it runs at most once per database file; runs unconditionally
+        the first time (including on a brand-new empty database, where every step is a fast no-op)
+        so every database ends up on the same v2 shape regardless of when it was created.
+        """
+        from .source_key import source_key_from_name
+        from ..domain.models import stable_hash
+
+        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if user_version >= 2:
+            return
+
+        def _has_column(table: str, column: str) -> bool:
+            return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})").fetchall())
+
+        if not _has_column("findings", "source_key"):
+            conn.execute("ALTER TABLE findings ADD COLUMN source_key TEXT NOT NULL DEFAULT ''")
+        if not _has_column("scan_manifests", "source_key"):
+            conn.execute("ALTER TABLE scan_manifests ADD COLUMN source_key TEXT NOT NULL DEFAULT ''")
+
+        if not _has_column("sync_state", "source_key"):
+            conn.executescript("""
+                CREATE TABLE sync_state__v2 (
+                  source_key TEXT NOT NULL DEFAULT '', object_name TEXT NOT NULL,
+                  last_watermark TEXT NOT NULL, updated_at TEXT NOT NULL,
+                  PRIMARY KEY (source_key, object_name)
+                );
+                INSERT INTO sync_state__v2 (source_key, object_name, last_watermark, updated_at)
+                    SELECT '', object_name, last_watermark, updated_at FROM sync_state;
+                DROP TABLE sync_state;
+                ALTER TABLE sync_state__v2 RENAME TO sync_state;
+            """)
+
+        if not _has_column("record_ledger", "source_key"):
+            conn.executescript("""
+                CREATE TABLE record_ledger__v2 (
+                  source_key TEXT NOT NULL DEFAULT '', object_name TEXT NOT NULL, record_id TEXT NOT NULL,
+                  first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL,
+                  content_hash TEXT NOT NULL, is_deleted INTEGER NOT NULL DEFAULT 0,
+                  PRIMARY KEY (source_key, object_name, record_id)
+                );
+                INSERT INTO record_ledger__v2 (
+                    source_key, object_name, record_id, first_seen_at, last_seen_at, content_hash, is_deleted
+                ) SELECT '', object_name, record_id, first_seen_at, last_seen_at, content_hash, is_deleted
+                    FROM record_ledger;
+                DROP TABLE record_ledger;
+                ALTER TABLE record_ledger__v2 RENAME TO record_ledger;
+            """)
+
+        # Backfill scan_manifests.source_key from source_name.
+        manifest_rows = conn.execute("SELECT id, source_name FROM scan_manifests").fetchall()
+        scan_source_key: dict[str, str] = {
+            row["id"]: source_key_from_name(row["source_name"]) for row in manifest_rows
+        }
+        if scan_source_key:
+            conn.executemany(
+                "UPDATE scan_manifests SET source_key=? WHERE id=?",
+                [(key, scan_id) for scan_id, key in scan_source_key.items()],
+            )
+
+        # Backfill findings.source_key from their scan's source_key (orphaned -> 'src:legacy'),
+        # then recompute the stored fingerprint to fold the source dimension in. Collisions (two
+        # rows landing on the same new fingerprint) keep the row with the latest last_seen_at and
+        # delete the other (and its feedback), so the UNIQUE index on fingerprint never trips.
+        finding_rows = conn.execute(
+            "SELECT id, scan_id, object_name, record_id, finding_type, field_name, fingerprint, last_seen_at "
+            "FROM findings"
+        ).fetchall()
+
+        owner_by_new_fp: dict[str, sqlite3.Row] = {}
+        deletions: list[str] = []
+        updates_by_id: dict[str, tuple[str, str]] = {}  # finding_id -> (source_key, new_fingerprint)
+
+        for row in finding_rows:
+            key = scan_source_key.get(row["scan_id"], "src:legacy")
+            new_fp = stable_hash({
+                "source": key,
+                "object": row["object_name"],
+                "record": row["record_id"],
+                "rule": row["finding_type"],
+                "field": row["field_name"],
+            })
+            other = owner_by_new_fp.get(new_fp)
+            if other is None:
+                owner_by_new_fp[new_fp] = row
+                updates_by_id[row["id"]] = (key, new_fp)
+            elif row["last_seen_at"] >= other["last_seen_at"]:
+                deletions.append(other["id"])
+                updates_by_id.pop(other["id"], None)
+                owner_by_new_fp[new_fp] = row
+                updates_by_id[row["id"]] = (key, new_fp)
+            else:
+                deletions.append(row["id"])
+
+        if deletions:
+            conn.executemany("DELETE FROM feedback WHERE finding_id=?", [(fid,) for fid in deletions])
+            conn.executemany("DELETE FROM findings WHERE id=?", [(fid,) for fid in deletions])
+        if updates_by_id:
+            conn.executemany(
+                "UPDATE findings SET source_key=?, fingerprint=? WHERE id=?",
+                [(key, new_fp, fid) for fid, (key, new_fp) in updates_by_id.items()],
+            )
+
+        if manifest_rows or finding_rows:
+            conn.execute(
+                """INSERT INTO audit_log (id, ts, event, actor, scan_id, object_name, detail_json)
+                   VALUES (?, ?, 'identity_migration', 'system', NULL, NULL, ?)""",
+                (
+                    str(uuid4()),
+                    now(),
+                    json.dumps({
+                        "scans_migrated": len(manifest_rows),
+                        "findings_migrated": len(finding_rows),
+                        "collisions_deleted": len(deletions),
+                    }),
+                ),
+            )
+
+        conn.execute("PRAGMA user_version=2")

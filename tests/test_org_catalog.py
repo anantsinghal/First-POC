@@ -112,6 +112,7 @@ def test_scan_schema_persistence_roundtrip(tmp_path: Path):
             row_count=5,
             source_hash=source_hash,
             fields=["Id", "Name"],
+            source_key="sf:example",
         )
         scan_repo.complete(
             conn,

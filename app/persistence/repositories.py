@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from ..domain.models import Candidate, Coverage
+from ..domain.models import Candidate, Coverage, stable_hash
 from .database import now, serialise_row
 
 
@@ -23,12 +23,13 @@ class ScanRepository:
         row_count: int,
         source_hash: str,
         fields: list[str],
+        source_key: str,
     ) -> None:
         """Insert running scan manifest (matches baseline persist_scan INSERT)."""
         conn.execute(
-            """INSERT INTO scan_manifests (id, source_name, object_name, status, created_at, row_count, source_hash, policy_version, parser_version, fields_json)
-               VALUES (?, ?, ?, 'running', ?, ?, ?, 'poc-policy-v1', 'poc-parser-v1', ?)""",
-            (scan_id, source_name, object_name, created_at, row_count, source_hash, json.dumps(fields)),
+            """INSERT INTO scan_manifests (id, source_name, object_name, status, created_at, row_count, source_hash, policy_version, parser_version, fields_json, source_key)
+               VALUES (?, ?, ?, 'running', ?, ?, ?, 'poc-policy-v1', 'poc-parser-v1', ?, ?)""",
+            (scan_id, source_name, object_name, created_at, row_count, source_hash, json.dumps(fields), source_key),
         )
 
     def complete(
@@ -72,15 +73,15 @@ class ScanRepository:
         return row["id"] if row else None
 
     def previous_scan_id(
-        self, conn: sqlite3.Connection, object_name: str, before_created_at: str
+        self, conn: sqlite3.Connection, object_name: str, before_created_at: str, source_key: str
     ) -> str | None:
-        """Return the most recent completed scan id for the same object before the timestamp."""
+        """Return the most recent completed scan id for the same (source_key, object) before the timestamp."""
         row = conn.execute(
             """SELECT id FROM scan_manifests
-               WHERE object_name=? AND created_at<? AND status='completed'
+               WHERE object_name=? AND source_key=? AND created_at<? AND status='completed'
                ORDER BY created_at DESC, rowid DESC
                LIMIT 1""",
-            (object_name, before_created_at),
+            (object_name, source_key, before_created_at),
         ).fetchone()
         return row["id"] if row else None
 
@@ -183,6 +184,7 @@ class FindingRepository:
         candidate: Candidate,
         source_hash: str,
         scan_created_at: str,
+        source_key: str,
     ) -> None:
         """Idempotent single-candidate upsert (delegates to the batched path for one code path)."""
         self.upsert_many(
@@ -191,6 +193,7 @@ class FindingRepository:
             candidates=[candidate],
             source_hash=source_hash,
             scan_created_at=scan_created_at,
+            source_key=source_key,
         )
 
     def upsert_many(
@@ -201,19 +204,31 @@ class FindingRepository:
         candidates: list[Candidate],
         source_hash: str,
         scan_created_at: str,
+        source_key: str,
     ) -> None:
         """Set-based idempotent upsert for many candidates.
 
         Same semantics as the single upsert (existing fingerprint -> update, reopen if was resolved;
         else insert; severity stored as .value), but uses one batched existence query + executemany
         instead of a SELECT+write per candidate — so persisting millions of findings scales.
+
+        The STORED fingerprint folds in source_key (Candidate.fingerprint itself stays source-blind
+        — the engine doesn't know or care where data came from) so two different sources that happen
+        to share object/record/rule/field never collide into the same finding.
         """
         if not candidates:
             return
-        # Dedupe by fingerprint within this batch (last occurrence wins, matching the sequential loop).
+        # Dedupe by (source-scoped) fingerprint within this batch (last occurrence wins).
         by_fingerprint: dict[str, Candidate] = {}
         for candidate in candidates:
-            by_fingerprint[candidate.fingerprint] = candidate
+            stored_fp = stable_hash({
+                "source": source_key,
+                "object": candidate.object_name,
+                "record": candidate.record_id,
+                "rule": candidate.finding_type,
+                "field": candidate.field_name,
+            })
+            by_fingerprint[stored_fp] = candidate
 
         existing: dict[str, tuple[str, str]] = {}
         fingerprints = list(by_fingerprint.keys())
@@ -266,6 +281,7 @@ class FindingRepository:
                     source_hash,
                     scan_created_at,
                     scan_created_at,
+                    source_key,
                 ))
         if updates:
             conn.executemany(
@@ -274,8 +290,8 @@ class FindingRepository:
             )
         if inserts:
             conn.executemany(
-                """INSERT INTO findings (id, fingerprint, scan_id, object_name, record_id, record_name, finding_type, field_name, severity, confidence, priority, status, title, evidence_json, source_hash, created_at, last_seen_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO findings (id, fingerprint, scan_id, object_name, record_id, record_name, finding_type, field_name, severity, confidence, priority, status, title, evidence_json, source_hash, created_at, last_seen_at, source_key)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 inserts,
             )
 
@@ -335,9 +351,9 @@ class FindingRepository:
         conn.execute("UPDATE findings SET status=? WHERE id=?", (status, finding_id))
 
     def resolve_for_records(
-        self, conn: sqlite3.Connection, *, object_name: str, record_ids: list[str]
+        self, conn: sqlite3.Connection, *, object_name: str, record_ids: list[str], source_key: str
     ) -> int:
-        """Resolve open/reopened findings for the given records, returning rows updated."""
+        """Resolve open/reopened findings for the given (source_key, object) records, returning rows updated."""
         if not record_ids:
             return 0
         updated = 0
@@ -347,9 +363,9 @@ class FindingRepository:
             placeholders = ",".join("?" * len(batch))
             cursor = conn.execute(
                 f"""UPDATE findings SET status='resolved'
-                    WHERE object_name=? AND record_id IN ({placeholders})
+                    WHERE object_name=? AND source_key=? AND record_id IN ({placeholders})
                     AND status IN ('open','reopened')""",
-                [object_name, *batch],
+                [object_name, source_key, *batch],
             )
             updated += cursor.rowcount
         return updated
@@ -475,20 +491,22 @@ class AuditRepository:
 class SyncRepository:
     """Repository for incremental sync state and the record-state ledger."""
 
-    def get_watermark(self, conn: sqlite3.Connection, object_name: str) -> str | None:
-        """Return the last watermark for the object, or None when absent."""
+    def get_watermark(self, conn: sqlite3.Connection, object_name: str, source_key: str) -> str | None:
+        """Return the last watermark for the (source_key, object), or None when absent."""
         row = conn.execute(
-            "SELECT last_watermark FROM sync_state WHERE object_name=?",
-            (object_name,),
+            "SELECT last_watermark FROM sync_state WHERE object_name=? AND source_key=?",
+            (object_name, source_key),
         ).fetchone()
         return row["last_watermark"] if row else None
 
-    def set_watermark(self, conn: sqlite3.Connection, object_name: str, watermark: str) -> None:
-        """Upsert the object's watermark and refresh updated_at to now()."""
+    def set_watermark(
+        self, conn: sqlite3.Connection, object_name: str, watermark: str, source_key: str
+    ) -> None:
+        """Upsert the (source_key, object)'s watermark and refresh updated_at to now()."""
         conn.execute(
-            """INSERT OR REPLACE INTO sync_state (object_name, last_watermark, updated_at)
-               VALUES (?, ?, ?)""",
-            (object_name, watermark, now()),
+            """INSERT OR REPLACE INTO sync_state (source_key, object_name, last_watermark, updated_at)
+               VALUES (?, ?, ?, ?)""",
+            (source_key, object_name, watermark, now()),
         )
 
     def ledger_upsert_many(
@@ -498,31 +516,35 @@ class SyncRepository:
         object_name: str,
         entries: list[tuple[str, str]],
         seen_at: str,
+        source_key: str,
     ) -> None:
         """Upsert ledger rows for the records seen in this sync window."""
         if not entries:
             return
         conn.executemany(
             """INSERT INTO record_ledger (
-                   object_name, record_id, first_seen_at, last_seen_at, content_hash, is_deleted
-               ) VALUES (?, ?, ?, ?, ?, 0)
-               ON CONFLICT(object_name, record_id) DO UPDATE SET
+                   source_key, object_name, record_id, first_seen_at, last_seen_at, content_hash, is_deleted
+               ) VALUES (?, ?, ?, ?, ?, ?, 0)
+               ON CONFLICT(source_key, object_name, record_id) DO UPDATE SET
                    last_seen_at=excluded.last_seen_at,
                    content_hash=excluded.content_hash,
                    is_deleted=0""",
-            [(object_name, record_id, seen_at, seen_at, content_hash) for record_id, content_hash in entries],
+            [
+                (source_key, object_name, record_id, seen_at, seen_at, content_hash)
+                for record_id, content_hash in entries
+            ],
         )
 
-    def ledger_active_ids(self, conn: sqlite3.Connection, object_name: str) -> set[str]:
-        """Return active record ids for the object."""
+    def ledger_active_ids(self, conn: sqlite3.Connection, object_name: str, source_key: str) -> set[str]:
+        """Return active record ids for the (source_key, object)."""
         rows = conn.execute(
-            "SELECT record_id FROM record_ledger WHERE object_name=? AND is_deleted=0",
-            (object_name,),
+            "SELECT record_id FROM record_ledger WHERE object_name=? AND source_key=? AND is_deleted=0",
+            (object_name, source_key),
         ).fetchall()
         return {row["record_id"] for row in rows}
 
     def ledger_mark_deleted(
-        self, conn: sqlite3.Connection, object_name: str, record_ids: list[str]
+        self, conn: sqlite3.Connection, object_name: str, record_ids: list[str], source_key: str
     ) -> int:
         """Mark the supplied record ids deleted in chunks, returning rows updated."""
         if not record_ids:
@@ -534,8 +556,8 @@ class SyncRepository:
             placeholders = ",".join("?" * len(batch))
             cursor = conn.execute(
                 f"""UPDATE record_ledger SET is_deleted=1
-                    WHERE object_name=? AND is_deleted=0 AND record_id IN ({placeholders})""",
-                [object_name, *batch],
+                    WHERE object_name=? AND source_key=? AND is_deleted=0 AND record_id IN ({placeholders})""",
+                [object_name, source_key, *batch],
             )
             updated += cursor.rowcount
         return updated

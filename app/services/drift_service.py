@@ -34,7 +34,9 @@ class DriftService:
             if manifest is None:
                 raise NotFoundError("Scan not found")
 
-            prev_id = self.scans.previous_scan_id(conn, manifest["object_name"], manifest["created_at"])
+            prev_id = self.scans.previous_scan_id(
+                conn, manifest["object_name"], manifest["created_at"], manifest.get("source_key", "")
+            )
             if prev_id is None:
                 return {
                     "scan_id": scan_id,
