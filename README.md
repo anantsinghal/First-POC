@@ -126,17 +126,26 @@ Auth is **off by default** (local dev stays friction-free). To lock the API, set
 `scanner_api_key`) when it receives a 401. `/api/health` stays open for liveness probes; the
 static UI shell (`/`, `/static`, `/tutorial`) also remains reachable without a key.
 
-## Status — v1 complete
+## Status — hardened v1, verified live
 
 Accuracy is measured, not asserted: see [`docs/benchmark-results.md`](docs/benchmark-results.md).
 Scale proof + scheduled CLI: `python -m tools.scale_proof` and `python -m tools.scheduled_scan` (see [`docs/scalability.md`](docs/scalability.md) and [`docs/scheduling.md`](docs/scheduling.md)).
 
-In scope and done: metadata-driven detection (reconciled, cohort-aware ML, planner-tiered), CSV /
-multi-object / live-Salesforce / profile-only scans, coverage contract, review + trust metrics +
-quality score, Org catalog, audit log, retention, out-of-core columnar profiling + streaming profile,
-dashboard UI. Tested end-to-end (`tests/` + health gate).
+A full code-level audit ([`docs/completion-plan-v2.md`](docs/completion-plan-v2.md)) found and fixed
+11 issues spanning correctness (cross-source finding collisions, statistically-invalid incremental
+scans), availability (scans blocking the event loop), and API robustness (unbounded findings
+responses, an unreported orphan-detection gap on the Bulk path). All fixed, tested, and **verified
+live against a real Salesforce org** (8 objects, zero failures). 196 tests green.
 
-Explicitly **deferred to v2** (best built against a live org's real volumes, not synthetic data):
-streaming/columnar **detection** at scale, multi-tenant SaaS internals, and LLM-assisted
-explanations. Honest limits today: large online scans are record-capped and reported as *sampled*;
-the planner defers expensive detectors on very large objects; no automatic write-back.
+In scope and done: metadata-driven detection (reconciled, cohort-aware ML, planner-tiered), CSV /
+multi-object / live-Salesforce / profile-only / bulk / org-wide scans, source-scoped finding identity,
+coverage contract, paginated review + trust metrics + quality score + reviewer provenance, Org
+catalog, audit log (incl. throttled auth-failure logging), retention with ledger pruning, out-of-core
+columnar profiling + streaming detection with volume control, API-key security, dashboard UI. Tested
+end-to-end (`tests/` + health gate).
+
+**The one remaining step is human, not code**: a real labeling session to activate the trained
+ranking model — see [`docs/goal-closure-runbook.md`](docs/goal-closure-runbook.md). Also deferred
+there: recording a live-org scale run, and a scoped PostgreSQL migration for parallel org-wide
+scanning (inventoried, not yet needed). Explicitly out of scope: Docker packaging (no Docker
+available in this environment), multi-tenant SaaS internals, LLM-assisted explanations.
